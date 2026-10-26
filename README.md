@@ -1,26 +1,51 @@
+<div align="center">
+
 # Neuro-Vision
 
-A 3D convolutional network that reads one brain scan and answers two questions: is an intracranial
-aneurysm present, and on which of 13 arteries? AAI 6640 Applied Deep Learning term project,
-Northeastern University.
+**Detection and localization of intracranial aneurysms in 3D brain scans**
 
-| | |
-|:--|:--|
-| Input | One 3D DICOM series: CTA, MRA, T1 post-contrast or T2 MRI |
-| Output | 14 probabilities: Aneurysm Present + 13 locations |
-| Data | [RSNA Intracranial Aneurysm Detection](https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection) (Kaggle, 2025) |
-| Score | ½ · (Aneurysm Present AUC + mean AUC over the 13 locations) |
-| Targets | 5-fold cross-validation ≥0.80; Kaggle private score ≥0.78 |
-| Status | Stage 1 setup |
+[![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![MONAI](https://img.shields.io/badge/MONAI-3D%20medical%20imaging-00A3E0)](https://monai.io/)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-coming%20soon-lightgrey)](#model-weights)
+[![Ruff](https://img.shields.io/badge/code%20style-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 
-## Setup
+</div>
 
-```bash
-uv sync
-uv run pytest
-```
+Neuro-Vision is a 3D convolutional network that reads one brain scan and answers two questions:
+**is an intracranial aneurysm present**, and **on which of 13 arteries does it sit?** It is trained
+and evaluated on the RSNA Intracranial Aneurysm Detection dataset, which spans four scan types and
+18 sites.
 
-The data is not in this repo: the Kaggle rules forbid sharing it. `scripts/download.sh` fetches it
-into `$NV_STORE` after you accept the rules on Kaggle.
+> [!IMPORTANT]
+> Neuro-Vision is a research model. It is not a medical device and must not be used for diagnosis.
 
-Author: Muhammad Obaidullah.
+## Contents
+
+- [At a glance](#at-a-glance)
+- [Approach](#approach)
+- [Results](#results)
+- [Model weights](#model-weights)
+- [Getting started](#getting-started)
+- [Repository structure](#repository-structure)
+- [Roadmap](#roadmap)
+- [Citation](#citation)
+- [Acknowledgements](#acknowledgements)
+
+## At a glance
+
+## Approach
+
+## Results
+
+## Model weights
+
+## Getting started
+
+## Repository structure
+
+## Roadmap
+
+## Citation
+
+## Acknowledgements
