@@ -27,7 +27,8 @@ def train_one_epoch(
 ) -> float:
     model.train()
     optimizer.zero_grad(set_to_none=True)
-    total, n_batches, pending = 0.0, 0, 0
+    total = torch.zeros((), device=device)
+    n_batches, pending = 0, 0
 
     def step() -> None:
         optimizer.step()
@@ -40,24 +41,33 @@ def train_one_epoch(
             logits = model(x.to(device))
         loss = bce(logits.float(), y.to(device))
         (loss / accum_steps).backward()
-        total += loss.item()
+        total += loss.detach()
         n_batches += 1
         pending += 1
         if pending == accum_steps:
             step()
             pending = 0
+    if n_batches == 0:
+        raise ValueError("empty loader")
     if pending:
+        # backward divided by accum_steps; a short final group needs its own mean
+        for p in model.parameters():
+            if p.grad is not None:
+                p.grad *= accum_steps / pending
         step()
-    return total / n_batches
+    return total.item() / n_batches
 
 
 def evaluate(
     model: nn.Module, loader: Iterable[tuple[torch.Tensor, torch.Tensor]], device: torch.device
 ) -> tuple[np.ndarray, float]:
+    model.to(device)
     probs, targets = [], []
     for x, y in loader:
-        probs.append(predict_volumes(model.to(device), x))
+        probs.append(predict_volumes(model, x))
         targets.append(y)
+    if not probs:
+        raise ValueError("empty loader")
     p = np.concatenate(probs)
     loss = F.binary_cross_entropy(torch.from_numpy(p), torch.cat(targets)).item()
     return p, loss

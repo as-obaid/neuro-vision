@@ -29,7 +29,7 @@ def test_ema_follows_closed_form_after_three_updates() -> None:
         model.weight.data.fill_(w)
         ema.update_parameters(model)
         shadow = decay * shadow + (1 - decay) * w
-    assert ema.module.weight.item() == pytest.approx(shadow)
+    assert float(ema.module.weight.detach()) == pytest.approx(shadow)
 
 
 def _lrs(warmup: int, total: int) -> list[float]:
@@ -54,3 +54,21 @@ def test_schedule_warms_up_then_cosines_to_zero() -> None:
     after = lrs[10:]
     assert all(a >= b for a, b in zip(after, after[1:], strict=False))
     assert math.isfinite(sum(lrs))
+
+
+@pytest.mark.parametrize(("warmup", "total"), [(10, 10), (10, 5), (-1, 10), (0, -1)])
+def test_schedule_rejects_bad_steps(warmup: int, total: int) -> None:
+    opt = torch.optim.AdamW([nn.Parameter(torch.zeros(1))], lr=1e-4)
+    with pytest.raises(ValueError):
+        cosine_with_warmup(opt, warmup, total)
+
+
+def test_ema_moves_batchnorm_buffers_toward_live_model() -> None:
+    model = nn.BatchNorm1d(1)
+    ema = make_ema(model, 0.5)
+    ema.update_parameters(model)  # first call copies
+    model.running_mean.fill_(4.0)
+    model.running_var.fill_(9.0)
+    ema.update_parameters(model)
+    assert float(ema.module.running_mean) == pytest.approx(2.0)
+    assert float(ema.module.running_var) == pytest.approx(5.0)

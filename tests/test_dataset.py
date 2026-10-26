@@ -91,3 +91,10 @@ def test_augment_is_repeatable_with_seed() -> None:
     aug.set_random_state(seed=3)
     b = aug(x.clone())
     torch.testing.assert_close(a, b)
+
+
+def test_dataset_returns_plain_tensor_with_augmentation(cache: Path) -> None:
+    ds = CacheDataset(cache, UIDS, np.zeros((3, 14)), build_augment(_cfg(1.0)))
+    x, y = ds[0]
+    assert type(x) is torch.Tensor
+    assert type(y) is torch.Tensor

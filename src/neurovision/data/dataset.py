@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from monai.utils import convert_to_tensor
 from torch.utils.data import Dataset
 
 
@@ -33,5 +34,6 @@ class CacheDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         volume = np.load(self.cache_dir / f"{self.uids[i]}.npy").astype(np.float32)
         x = torch.from_numpy(volume).unsqueeze(0)
         if self.transform is not None:
-            x = self.transform(x)
+            # MONAI returns MetaTensor, which the default collate and the AMP path handle badly
+            x = convert_to_tensor(self.transform(x), track_meta=False)
         return x, torch.from_numpy(self.targets[i])
