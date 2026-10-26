@@ -1,0 +1,15 @@
+source:
+  dataset: spc819/rsna2025-aneurysm-26class-seg
+  url: https://huggingface.co/datasets/spc819/rsna2025-aneurysm-26class-seg
+  revision: 23af2ec65e98701f4b9a67a50f15e9fb567d8815
+  paper: arXiv 2606.26706
+  licence: CC BY-NC 4.0 (labels, research use only); code and weights Apache 2.0
+  retrieved: 2026-10-26
+  files:
+    labelsTr_26classes_in_orig_space: 4317
+    labelsTr_multiframe_cor_sag: 27
+derivation:
+  rule: location k is positive iff class 14+k has at least one voxel; Aneurysm Present is the OR of the 13 locations; series without a mask keep their train.csv labels
+  script: scripts/derive_labels.py
+corrected_csv: labels/corrected.csv
+corrected_csv_sha256: 4f32f4aa650d145a37b058fe72fa3a8fc2bce4f2e303474f4b2beb751903a365
