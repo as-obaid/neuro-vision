@@ -1,0 +1,145 @@
+{
+  "n_series": 4348,
+  "modality": {
+    "CTA": 1808,
+    "MRA": 1252,
+    "MRI T2": 983,
+    "MRI T1post": 305
+  },
+  "positives": {
+    "Left Infraclinoid Internal Carotid Artery": {
+      "CTA": 33,
+      "MRA": 32,
+      "MRI T1post": 4,
+      "MRI T2": 9,
+      "total": 78
+    },
+    "Right Infraclinoid Internal Carotid Artery": {
+      "CTA": 46,
+      "MRA": 36,
+      "MRI T1post": 3,
+      "MRI T2": 13,
+      "total": 98
+    },
+    "Left Supraclinoid Internal Carotid Artery": {
+      "CTA": 145,
+      "MRA": 123,
+      "MRI T1post": 14,
+      "MRI T2": 48,
+      "total": 330
+    },
+    "Right Supraclinoid Internal Carotid Artery": {
+      "CTA": 104,
+      "MRA": 121,
+      "MRI T1post": 12,
+      "MRI T2": 41,
+      "total": 278
+    },
+    "Left Middle Cerebral Artery": {
+      "CTA": 130,
+      "MRA": 56,
+      "MRI T1post": 7,
+      "MRI T2": 26,
+      "total": 219
+    },
+    "Right Middle Cerebral Artery": {
+      "CTA": 161,
+      "MRA": 80,
+      "MRI T1post": 11,
+      "MRI T2": 42,
+      "total": 294
+    },
+    "Anterior Communicating Artery": {
+      "CTA": 232,
+      "MRA": 81,
+      "MRI T1post": 9,
+      "MRI T2": 41,
+      "total": 363
+    },
+    "Left Anterior Cerebral Artery": {
+      "CTA": 32,
+      "MRA": 9,
+      "MRI T1post": 2,
+      "MRI T2": 3,
+      "total": 46
+    },
+    "Right Anterior Cerebral Artery": {
+      "CTA": 35,
+      "MRA": 12,
+      "MRI T1post": 2,
+      "MRI T2": 7,
+      "total": 56
+    },
+    "Left Posterior Communicating Artery": {
+      "CTA": 62,
+      "MRA": 13,
+      "MRI T1post": 4,
+      "MRI T2": 7,
+      "total": 86
+    },
+    "Right Posterior Communicating Artery": {
+      "CTA": 73,
+      "MRA": 20,
+      "MRI T1post": 3,
+      "MRI T2": 5,
+      "total": 101
+    },
+    "Basilar Tip": {
+      "CTA": 65,
+      "MRA": 25,
+      "MRI T1post": 3,
+      "MRI T2": 17,
+      "total": 110
+    },
+    "Other Posterior Circulation": {
+      "CTA": 65,
+      "MRA": 25,
+      "MRI T1post": 8,
+      "MRI T2": 15,
+      "total": 113
+    },
+    "Aneurysm Present": {
+      "CTA": 973,
+      "MRA": 555,
+      "MRI T1post": 77,
+      "MRI T2": 258,
+      "total": 1863
+    }
+  },
+  "age": {
+    "count": 4348,
+    "mean": 58.46688132474701,
+    "median": 60.0,
+    "min": 18,
+    "max": 89,
+    "bands": {
+      "<40": 573,
+      "40-59": 1571,
+      "60-79": 1813,
+      ">=80": 391
+    }
+  },
+  "sex": {
+    "Female": 3005,
+    "Male": 1343
+  },
+  "missing": {
+    "Left Infraclinoid Internal Carotid Artery": 0,
+    "Right Infraclinoid Internal Carotid Artery": 0,
+    "Left Supraclinoid Internal Carotid Artery": 0,
+    "Right Supraclinoid Internal Carotid Artery": 0,
+    "Left Middle Cerebral Artery": 0,
+    "Right Middle Cerebral Artery": 0,
+    "Anterior Communicating Artery": 0,
+    "Left Anterior Cerebral Artery": 0,
+    "Right Anterior Cerebral Artery": 0,
+    "Left Posterior Communicating Artery": 0,
+    "Right Posterior Communicating Artery": 0,
+    "Basilar Tip": 0,
+    "Other Posterior Circulation": 0,
+    "Aneurysm Present": 0,
+    "PatientAge": 0,
+    "PatientSex": 0,
+    "Modality": 0
+  }
+}
