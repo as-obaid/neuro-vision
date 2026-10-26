@@ -3,7 +3,7 @@
 #SBATCH --account=ostadabbas
 #SBATCH --partition=short
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --time=10:00:00
 #SBATCH --output=slurm/logs/%x_%j.out
 #SBATCH --error=slurm/logs/%x_%j.err

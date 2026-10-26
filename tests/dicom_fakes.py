@@ -38,6 +38,7 @@ def write_series(
     study_date: str = "20200101",
     pixels: np.ndarray | None = None,
     top_level_geometry: bool = True,
+    frame_orientation: bool = True,
     photometric: str = "MONOCHROME2",
     samples_per_pixel: int = 1,
 ) -> list[Path]:
@@ -47,7 +48,9 @@ def write_series(
     normal, `slice_spacing` apart. With `multiframe` all slices go into one file that carries
     NumberOfFrames, the first slice's position, and every slice's position, orientation and pixel
     spacing per frame. `top_level_geometry=False` leaves orientation, spacing and position out of
-    the top level. `pixels` (slices, rows, cols) replaces the default pattern.
+    the top level; `frame_orientation=False` leaves orientation and spacing out of the frame
+    groups too (as when they sit in the stripped shared groups).
+    `pixels` (slices, rows, cols) replaces the default pattern.
     """
     n, rows, cols = shape
     row_dir = np.array(orientation[:3], dtype=float)
@@ -83,7 +86,7 @@ def write_series(
         if multiframe:
             ds.NumberOfFrames = n
             ds.PerFrameFunctionalGroupsSequence = [
-                _frame_group(p, orientation, pixel_spacing) for p in positions
+                _frame_group(p, orientation, pixel_spacing, frame_orientation) for p in positions
             ]
         ds.PixelData = data.tobytes()
         if rle:
@@ -94,7 +97,10 @@ def write_series(
 
 
 def _frame_group(
-    position: Sequence[float], orientation: Sequence[float], pixel_spacing: Sequence[float]
+    position: Sequence[float],
+    orientation: Sequence[float],
+    pixel_spacing: Sequence[float],
+    with_orientation: bool,
 ) -> Dataset:
     place, plane, measures = Dataset(), Dataset(), Dataset()
     place.ImagePositionPatient = list(position)
@@ -102,8 +108,9 @@ def _frame_group(
     measures.PixelSpacing = list(pixel_spacing)
     group = Dataset()
     group.PlanePositionSequence = [place]
-    group.PlaneOrientationSequence = [plane]
-    group.PixelMeasuresSequence = [measures]
+    if with_orientation:
+        group.PlaneOrientationSequence = [plane]
+        group.PixelMeasuresSequence = [measures]
     return group
 
 

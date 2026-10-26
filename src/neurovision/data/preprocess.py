@@ -16,6 +16,14 @@ from neurovision.data.dicom import read_series
 SIZE = 128
 MIN_SLICES = 16
 MAX_GAP_RATIO = 1.5
+MAX_OBLIQUE_DEG = 10
+# Standard orientations assumed when the series carries none, by the patient axis (LPS) of the
+# slice direction: z axial, y coronal, x sagittal.
+STANDARD_ORIENTATION = {
+    0: np.array([0.0, 1, 0, 0, 0, -1]),
+    1: np.array([1.0, 0, 0, 0, 0, -1]),
+    2: np.array([1.0, 0, 0, 0, 1, 0]),
+}
 ATOL = 1e-3  # mm or direction cosine; spacing and position are stored to about 1e-4
 
 
@@ -29,7 +37,7 @@ class Geometry:
     affine: np.ndarray  # voxel (column, row, slice) to patient LPS, mm
     spacing: tuple[float, float, float]  # column, row, slice
     size: tuple[int, int, int]  # columns, rows, slices
-    source: str  # "top-level", or "per-frame" if any geometry tag came from the frame groups
+    source: str  # "top-level"; "per-frame" if a tag came from the frame groups; "assumed"
 
 
 def _frame_value(ds: Dataset, frame: int, sequence: str, tag: str) -> Any:
@@ -49,6 +57,15 @@ def _unique(values: Sequence[np.ndarray], reason: str) -> np.ndarray:
     if not all(np.allclose(v, first, atol=ATOL) for v in values):
         raise GeometryError(reason)
     return first
+
+
+def _assume_orientation(positions: np.ndarray) -> np.ndarray:
+    # Extent per axis rather than a step: it does not depend on the order the frames come in.
+    extent = np.ptp(positions, axis=0)
+    axis = int(np.argmax(extent))
+    if extent[axis] < np.cos(np.radians(MAX_OBLIQUE_DEG)) * np.linalg.norm(extent):
+        raise GeometryError("oblique slice direction")
+    return STANDARD_ORIENTATION[axis]
 
 
 def series_geometry(datasets: Sequence[Dataset]) -> Geometry:
@@ -82,21 +99,31 @@ def series_geometry(datasets: Sequence[Dataset]) -> Geometry:
                 missing = "multi-frame without positions"
             else:
                 position, missing = ds.get("ImagePositionPatient"), "missing position"
-            if orient is None:
-                raise GeometryError("missing orientation")
-            if space is None:
-                raise GeometryError("missing pixel spacing")
             if position is None:
                 raise GeometryError(missing)
-            orients.append(np.array(orient, dtype=float))
-            spacings.append(np.array(space, dtype=float))
+            orients.append(orient)
+            spacings.append(space)
             positions.append(np.array(position, dtype=float))
     if len(sizes) != 1:
         raise GeometryError("mixed size")
-    orient = _unique(orients, "mixed orientation")
-    row_spacing, col_spacing = _unique(spacings, "mixed pixel spacing")
     if len(positions) < MIN_SLICES:
         raise GeometryError("too few slices")
+    assumed = False
+    if all(o is None for o in orients):
+        orient, assumed = _assume_orientation(np.array(positions)), True
+    elif any(o is None for o in orients):
+        raise GeometryError("missing orientation")
+    else:
+        orient = _unique([np.array(o, dtype=float) for o in orients], "mixed orientation")
+    if all(s is None for s in spacings):
+        row_spacing = col_spacing = 1.0  # irrelevant: the whole field of view is resampled
+        assumed = True
+    elif any(s is None for s in spacings):
+        raise GeometryError("missing pixel spacing")
+    else:
+        row_spacing, col_spacing = _unique(
+            [np.array(s, dtype=float) for s in spacings], "mixed pixel spacing"
+        )
     col_dir, row_dir = orient[:3], orient[3:]  # direction of increasing column, of increasing row
     normal = np.cross(col_dir, row_dir)
     heights = np.array(positions) @ normal
@@ -116,7 +143,7 @@ def series_geometry(datasets: Sequence[Dataset]) -> Geometry:
         affine=affine,
         spacing=(float(col_spacing), float(row_spacing), float(step)),
         size=(int(cols), int(rows), len(order)),
-        source="per-frame" if per_frame else "top-level",
+        source="assumed" if assumed else "per-frame" if per_frame else "top-level",
     )
 
 

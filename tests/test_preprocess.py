@@ -40,7 +40,7 @@ def test_shape_dtype_contiguity_and_normalisation(tmp_path: Path) -> None:
     assert abs(float(vol.astype(np.float32).std()) - 1.0) < 0.1
 
 
-def cube_series(folder: Path, orientation: Sequence[float]) -> None:
+def cube_series(folder: Path, orientation: Sequence[float], *, stripped: bool = False) -> None:
     """Fill the Left, Anterior, Superior octant (LPS: x > 0, y < 0, z > 0) of a 60 mm box."""
     n, rows, cols = 20, 20, 20
     step = 3.0
@@ -64,6 +64,9 @@ def cube_series(folder: Path, orientation: Sequence[float]) -> None:
         orientation=orientation,
         positions=positions,
         pixels=(bright * 1000).astype(np.uint16),
+        multiframe=stripped,
+        top_level_geometry=not stripped,
+        frame_orientation=not stripped,
     )
 
 
@@ -82,6 +85,49 @@ def test_cube_lands_in_left_anterior_superior_octant(
     assert centre[0] < 64 - 10
     assert centre[1] > 64 + 10
     assert centre[2] > 64 + 10
+
+
+@pytest.mark.parametrize(
+    "orientation",
+    [(1, 0, 0, 0, 1, 0), (0, 1, 0, 0, 0, -1), (1, 0, 0, 0, 0, -1)],
+    ids=["axial", "sagittal", "coronal"],
+)
+def test_stripped_multiframe_assumes_standard_orientation(
+    tmp_path: Path, orientation: Sequence[float]
+) -> None:
+    cube_series(tmp_path / "s", orientation, stripped=True)
+    vol, geometry = preprocess_with_geometry(tmp_path / "s")
+    assert geometry.source == "assumed"
+    centre = np.argwhere(vol > 0).mean(axis=0)
+    assert centre[0] < 64 - 10
+    assert centre[1] > 64 + 10
+    assert centre[2] > 64 + 10
+
+
+def test_stripped_series_with_reversed_frames_keeps_slice_direction(tmp_path: Path) -> None:
+    cube_series(tmp_path / "a", (1, 0, 0, 0, 1, 0), stripped=True)
+    (path,) = (tmp_path / "a").glob("*.dcm")
+    ds = pydicom.dcmread(path)
+    pixels = ds.pixel_array[::-1].copy()
+    ds.PerFrameFunctionalGroupsSequence = list(ds.PerFrameFunctionalGroupsSequence)[::-1]
+    ds.PixelData = pixels.tobytes()
+    ds.save_as(path)
+    vol = preprocess_series(tmp_path / "a")
+    assert np.argwhere(vol > 0).mean(axis=0)[2] > 64 + 10
+
+
+def test_rejects_oblique_step_without_orientation(tmp_path: Path) -> None:
+    positions = [(0.0, 3.0 * i, 3.0 * i) for i in range(20)]
+    write_series(
+        tmp_path / "s",
+        **KW,
+        positions=positions,
+        multiframe=True,
+        top_level_geometry=False,
+        frame_orientation=False,
+    )
+    with pytest.raises(GeometryError, match="oblique slice direction"):
+        preprocess_series(tmp_path / "s")
 
 
 def test_file_order_does_not_matter(tmp_path: Path) -> None:
@@ -154,9 +200,9 @@ def test_rejects_too_few_slices(tmp_path: Path) -> None:
         preprocess_series(tmp_path / "s")
 
 
-def test_rejects_missing_geometry_in_both_places(tmp_path: Path) -> None:
+def test_rejects_missing_position_in_both_places(tmp_path: Path) -> None:
     write_series(tmp_path / "s", **KW, top_level_geometry=False)
-    with pytest.raises(GeometryError, match="missing orientation"):
+    with pytest.raises(GeometryError, match="missing position"):
         preprocess_series(tmp_path / "s")
 
 
@@ -180,6 +226,26 @@ def test_rejects_non_finite_pixels(tmp_path: Path) -> None:
     write_series(tmp_path / "s", **KW, rescale_slope=1e38)
     with pytest.raises(GeometryError, match="non-finite pixels"):
         preprocess_series(tmp_path / "s")
+
+
+def test_script_records_unexpected_errors_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "store"
+    series = root / "raw" / "series"
+    write_series(series / "1.2.1", **KW)
+    files = write_series(series / "1.2.2", **KW)
+    files[4].write_bytes(b"not dicom")
+    pd.DataFrame({"SeriesInstanceUID": ["1.2.2", "1.2.1"]}).to_csv(
+        root / "raw" / "train.csv", index=False
+    )
+    monkeypatch.setenv("NV_STORE", str(root))
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
+    load_script(monkeypatch).main([])
+    index = pd.read_csv(root / "cache" / "b2-128" / "index.csv").set_index("SeriesInstanceUID")
+    assert index.loc["1.2.1", "status"] == "ok"
+    assert index.loc["1.2.2", "status"] == "excluded"
+    assert str(index.loc["1.2.2", "reason"]).startswith("error: ")
 
 
 def load_script(monkeypatch: pytest.MonkeyPatch) -> ModuleType:

@@ -46,6 +46,8 @@ def process(uid: str, series_dir: Path, cache: Path) -> dict[str, object]:
         volume, geometry = preprocess_with_geometry(series_dir)
     except GeometryError as error:
         row.update(status="excluded", reason=str(error))
+    except Exception as error:  # one bad series must not stop a 10-hour run
+        row.update(status="excluded", reason=f"error: {type(error).__name__}")
     else:
         tmp = cache / f"{uid}.npy.tmp"
         with tmp.open("wb") as handle:
