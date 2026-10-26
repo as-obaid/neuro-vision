@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -15,15 +16,13 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     train, score = load_script("train"), load_script("score_oof")
     labels = fake_labels()
     folds = make_folds(labels, 5, 0, None)
-    # Equal positive counts in every fold give every fold the same prior, so B0 ties everywhere.
-    rank = folds.groupby(folds).cumcount().to_numpy()
-    for i, target in enumerate(TARGETS):
-        labels[target] = ((rank + i) % 10 == 0).astype("int8")
     for module in (train, score):
         monkeypatch.setattr(module, "load_labels", lambda store, source: labels)
     monkeypatch.setenv("NV_STORE", str(tmp_path))
     (tmp_path / "folds").mkdir()
     folds.to_csv(tmp_path / "folds" / "folds.csv")
+    sha = hashlib.sha256((tmp_path / "folds" / "folds.csv").read_bytes()).hexdigest()
+    (tmp_path / "folds" / "folds.yaml").write_text(f"folds_sha256: {sha}\n")
     configs = tmp_path / "configs"
     configs.mkdir()
     (configs / "b0.yaml").write_text("kind: prior\nseed: 0\nlabels: corrected\n")
@@ -114,3 +113,31 @@ def test_scorer_refuses_extra_series(setup) -> None:
     pd.concat([oof, extra]).to_csv(path, index=False)
     with pytest.raises(SystemExit, match=r"fold 2: 0 series missing, 1 not in this fold"):
         score.main([config])  # type: ignore[attr-defined]
+
+
+def _set_commits(runs: Path, commits: list[str]) -> None:
+    for k, commit in enumerate(commits):
+        path = runs / f"fold{k}" / "meta.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "commit": commit}))
+
+
+def test_scorer_records_training_commit_not_head(setup) -> None:
+    score, runs, config = _trained(setup)
+    _set_commits(runs, ["abc123"] * 5)
+    score.main([config])  # type: ignore[attr-defined]
+    assert json.loads((runs / "score.json").read_text())["commit"] == "abc123"
+
+
+def test_scorer_lists_commits_when_folds_differ(setup) -> None:
+    score, runs, config = _trained(setup)
+    _set_commits(runs, ["abc123", "abc123", "def456", "abc123", "abc123"])
+    score.main([config])  # type: ignore[attr-defined]
+    assert json.loads((runs / "score.json").read_text())["commit"] == ["abc123", "def456"]
+
+
+def test_scorer_allows_partial_folds(setup) -> None:
+    score, runs, config = _trained(setup)
+    for k in range(1, 5):
+        (runs / f"fold{k}" / "oof.csv").unlink()
+    score.main([config])  # type: ignore[attr-defined]
+    assert json.loads((runs / "score.json").read_text())["folds"] == [0]

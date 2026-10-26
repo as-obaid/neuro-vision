@@ -12,7 +12,6 @@ from neurovision.data.folds import load_folds
 from neurovision.data.labels import TARGETS, load_labels
 from neurovision.evaluate.metric import label_aucs, score
 from neurovision.paths import store
-from neurovision.track.meta import run_meta
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -27,6 +26,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not files:
         raise SystemExit(f"no oof.csv under {run_root}")
     parts = []
+    commits: list[str] = []
     for path in files:
         k = int(path.parent.name[4:])
         oof = pd.read_csv(path, index_col="SeriesInstanceUID")
@@ -37,21 +37,25 @@ def main(argv: Sequence[str] | None = None) -> None:
         if missing or extra:
             raise SystemExit(f"fold {k}: {missing} series missing, {extra} not in this fold")
         parts.append(oof[list(TARGETS)])
+        meta = json.loads((path.parent / "meta.json").read_text())
+        if meta["commit"] not in commits:
+            commits.append(meta["commit"])
     oof = pd.concat(parts)
 
     y_true = load_labels(root, config.labels).loc[oof.index, list(TARGETS)].to_numpy()
     y_prob = oof.to_numpy()
+    aucs = label_aucs(y_true, y_prob)
     result = {
         "config": config.name,
         "folds": [int(p.parent.name[4:]) for p in files],
         "n": len(oof),
         "score": score(y_true, y_prob),
-        "aucs": label_aucs(y_true, y_prob),
-        "commit": run_meta(config)["commit"],
+        "aucs": aucs,
+        "commit": commits[0] if len(commits) == 1 else commits,
     }
     (run_root / "score.json").write_text(json.dumps(result, indent=2))
     print(f"score {result['score']:.4f}")
-    for name, auc in result["aucs"].items():
+    for name, auc in aucs.items():
         print(f"  {auc:.4f}  {name}")
 
 
