@@ -14,7 +14,7 @@ from pydicom.multival import MultiValue
 from pydicom.sequence import Sequence as DicomSequence
 
 from neurovision.data.dicom import TEST_TAGS, read_header
-from neurovision.paths import store
+from neurovision.paths import require_unzipped, store
 
 CANDIDATES = ("PatientID", "StudyInstanceUID", "FrameOfReferenceUID", "StudyDate")
 EXTRA_TAGS = tuple(tag for tag in CANDIDATES if tag not in TEST_TAGS)
@@ -65,8 +65,7 @@ def summarise(headers: pd.DataFrame, train: pd.DataFrame, tag: str) -> str:
 def main(argv: Sequence[str] | None = None) -> None:
     argparse.ArgumentParser(description=__doc__).parse_args(argv)
     root = store()
-    if not (root / "raw" / ".complete").exists():
-        raise SystemExit("raw/.complete is missing: the unzip has not finished")
+    require_unzipped(root)
     train = pd.read_csv(root / "raw" / "train.csv")
     known = set(train["SeriesInstanceUID"])
     dirs = sorted(d for d in (root / "raw" / "series").iterdir() if d.name in known)

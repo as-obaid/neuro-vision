@@ -11,7 +11,9 @@ from torch.utils.data import Dataset
 
 
 def load_index(cache_dir: Path) -> pd.DataFrame:
-    return pd.read_csv(cache_dir / "index.csv", index_col="SeriesInstanceUID")
+    table = pd.read_csv(cache_dir / "index.csv", dtype={"reason": str})
+    table["reason"] = table["reason"].fillna("")
+    return table.set_index("SeriesInstanceUID")
 
 
 class CacheDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):

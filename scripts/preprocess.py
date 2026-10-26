@@ -19,8 +19,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from neurovision.data.preprocess import GeometryError, preprocess_with_geometry
-from neurovision.paths import store
+from neurovision.data.dataset import load_index
+from neurovision.data.preprocess import ERROR_PREFIX, GeometryError, preprocess_with_geometry
+from neurovision.paths import atomic_write, require_unzipped, store
 
 COLUMNS = (
     "SeriesInstanceUID",
@@ -42,6 +43,11 @@ def _one_thread() -> None:
     torch.set_num_threads(1)  # one process per CPU
 
 
+def _save_npy(path: Path, volume: np.ndarray) -> None:
+    with path.open("wb") as handle:  # a handle keeps the name: np.save(path) would add ".npy"
+        np.save(handle, volume)
+
+
 def process(uid: str, series_dir: Path, cache: Path) -> dict[str, object]:
     row: dict[str, object] = {"SeriesInstanceUID": uid}
     start = time.perf_counter()
@@ -50,12 +56,9 @@ def process(uid: str, series_dir: Path, cache: Path) -> dict[str, object]:
     except GeometryError as error:
         row.update(status="excluded", reason=str(error))
     except Exception as error:  # one bad series must not stop a 10-hour run
-        row.update(status="excluded", reason=f"error: {type(error).__name__}")
+        row.update(status="excluded", reason=f"{ERROR_PREFIX} {type(error).__name__}")
     else:
-        tmp = cache / f"{uid}.npy.tmp"
-        with tmp.open("wb") as handle:
-            np.save(handle, volume)
-        os.replace(tmp, cache / f"{uid}.npy")
+        atomic_write(cache / f"{uid}.npy", lambda tmp: _save_npy(tmp, volume))
         row.update(status="ok", reason="", geometry_source=geometry.source)
         row.update(n_slices=geometry.size[2])
         for axis, name in enumerate("xyz"):
@@ -74,19 +77,21 @@ def _load_index(index: Path) -> list[dict[str, str]]:
     kept = [
         row
         for row in csv.DictReader(lines)
-        if not row["reason"].startswith("error:") and row["status"] in ("ok", "excluded")
+        if not row["reason"].startswith(ERROR_PREFIX) and row["status"] in ("ok", "excluded")
     ]
-    tmp = index.with_name(index.name + ".tmp")
-    with tmp.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, COLUMNS)
-        writer.writeheader()
-        writer.writerows(kept)
-    os.replace(tmp, index)
+
+    def write(tmp: Path) -> None:
+        with tmp.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, COLUMNS)
+            writer.writeheader()
+            writer.writerows(kept)
+
+    atomic_write(index, write)
     return kept
 
 
 def _died(uid: str) -> dict[str, object]:
-    return {"SeriesInstanceUID": uid, "status": "excluded", "reason": "error: worker died"}
+    return {"SeriesInstanceUID": uid, "status": "excluded", "reason": f"{ERROR_PREFIX} worker died"}
 
 
 def _run(todo: Sequence[str], root: Path, cache: Path, workers: int, handle: TextIO) -> None:
@@ -121,8 +126,7 @@ def _run(todo: Sequence[str], root: Path, cache: Path, workers: int, handle: Tex
 def main(argv: Sequence[str] | None = None) -> None:
     argparse.ArgumentParser(description=__doc__).parse_args(argv)
     root = store()
-    if not (root / "raw" / ".complete").exists():
-        raise SystemExit("raw/.complete is missing: the unzip has not finished")
+    require_unzipped(root)
     cache = root / "cache" / "b2-128"
     cache.mkdir(parents=True, exist_ok=True)
     index = cache / "index.csv"
@@ -132,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
     with index.open("a", newline="") as handle:
         _run(todo, root, cache, workers, handle)
-    table = pd.read_csv(index, dtype={"reason": str}).fillna({"reason": ""})
+    table = load_index(cache)
     reasons = Counter(table.loc[table["status"] == "excluded", "reason"])
     print(f"ok {(table['status'] == 'ok').sum()}, excluded {sum(reasons.values())}")
     for reason, count in sorted(reasons.items()):

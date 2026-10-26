@@ -24,6 +24,7 @@ STANDARD_ORIENTATION = {
     1: np.array([1.0, 0, 0, 0, 0, -1]),
     2: np.array([1.0, 0, 0, 0, 1, 0]),
 }
+ERROR_PREFIX = "error:"  # index.csv reason of a transient failure, retried on the next run
 ATOL = 1e-3  # mm or direction cosine; spacing and position are stored to about 1e-4
 
 

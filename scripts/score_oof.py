@@ -22,13 +22,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     root = store()
     folds = load_folds(root)
     run_root = root / "runs" / config.name
-    files = sorted(run_root.glob("fold*/oof.csv"), key=lambda p: int(p.parent.name[4:]))
-    if not files:
+    found = sorted((int(p.parent.name[4:]), p) for p in run_root.glob("fold*/oof.csv"))
+    if not found:
         raise SystemExit(f"no oof.csv under {run_root}")
     parts = []
     commits: list[str] = []
-    for path in files:
-        k = int(path.parent.name[4:])
+    for k, path in found:
         oof = pd.read_csv(path, index_col="SeriesInstanceUID")
         expected = folds.index[folds == k]
         if oof.index.has_duplicates:
@@ -38,8 +37,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise SystemExit(f"fold {k}: {missing} series missing, {extra} not in this fold")
         parts.append(oof[list(TARGETS)])
         meta = json.loads((path.parent / "meta.json").read_text())
-        if meta["commit"] not in commits:
-            commits.append(meta["commit"])
+        commits.append(meta["commit"])
+    commits = list(dict.fromkeys(commits))
     oof = pd.concat(parts)
 
     y_true = load_labels(root, config.labels).loc[oof.index, list(TARGETS)].to_numpy()
@@ -47,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     aucs = label_aucs(y_true, y_prob)
     result = {
         "config": config.name,
-        "folds": [int(p.parent.name[4:]) for p in files],
+        "folds": [k for k, _ in found],
         "n": len(oof),
         "score": score(y_true, y_prob),
         "aucs": aucs,

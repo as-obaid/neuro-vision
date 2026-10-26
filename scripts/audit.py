@@ -10,7 +10,7 @@ from typing import TypedDict
 import pandas as pd
 
 from neurovision.data.labels import TARGETS, load_labels
-from neurovision.paths import store
+from neurovision.paths import require_unzipped, store
 
 AGE_BANDS = (("<40", 0, 40), ("40-59", 40, 60), ("60-79", 60, 80), (">=80", 80, 10**6))
 
@@ -119,8 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     root = store()
     labels = load_labels(root, "original")
     if args.verify:
-        if not (root / "raw" / ".complete").is_file():
-            raise SystemExit(f"{root / 'raw' / '.complete'} is missing: the unzip has not finished")
+        require_unzipped(root)
         return verify(root, set(labels.index))
     summary = summarise(labels)
     print_tables(summary)

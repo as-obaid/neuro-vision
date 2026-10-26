@@ -2,7 +2,6 @@
 
 import json
 import math
-import os
 import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -25,6 +24,7 @@ from neurovision.data.labels import TARGETS
 from neurovision.evaluate.metric import score
 from neurovision.infer.predict import predict_volumes
 from neurovision.models.resnet3d import build_model
+from neurovision.paths import atomic_write
 from neurovision.track import log
 from neurovision.track.meta import run_meta
 from neurovision.train.ema import make_ema
@@ -54,7 +54,7 @@ def train_one_epoch(
     model.train()
     optimizer.zero_grad(set_to_none=True)
     total = torch.zeros((), device=device)
-    n_batches, pending = 0, 0
+    n = 0
 
     def step() -> None:
         optimizer.step()
@@ -68,20 +68,18 @@ def train_one_epoch(
         loss = bce(logits.float(), y.to(device))
         (loss / accum_steps).backward()
         total += loss.detach()
-        n_batches += 1
-        pending += 1
-        if pending == accum_steps:
+        n += 1
+        if n % accum_steps == 0:
             step()
-            pending = 0
-    if n_batches == 0:
+    if n == 0:
         raise ValueError("empty loader")
-    if pending:
+    if tail := n % accum_steps:
         # backward divided by accum_steps; a short final group needs its own mean
         for p in model.parameters():
             if p.grad is not None:
-                p.grad *= accum_steps / pending
+                p.grad *= accum_steps / tail
         step()
-    return total.item() / n_batches
+    return total.item() / n
 
 
 def evaluate(
@@ -104,9 +102,7 @@ def peak_memory_mib(device: torch.device) -> float | None:
 
 
 def atomic_save(path: Path, obj: object) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    torch.save(obj, tmp)
-    os.replace(tmp, path)
+    atomic_write(path, lambda tmp: torch.save(obj, tmp))
 
 
 def save_checkpoint(
@@ -204,17 +200,8 @@ def fit(
     ema = make_ema(model, cfg.ema_decay)
     valid = val_loader(val_ds, cfg, pin)
 
-    first_epoch, best_score, peak = 0, -math.inf, None
+    first_epoch, best_score, peak, rows = _resume(run_dir, model, ema, optimizer, scheduler)
     history_path = run_dir / "history.csv"
-    rows: list[dict[str, float]] = []
-    if (run_dir / "last.pt").exists():
-        first_epoch, best_score, peak = load_checkpoint(
-            run_dir / "last.pt", model, ema, optimizer, scheduler
-        )
-        # a crash after the history write but before last.pt would otherwise repeat an epoch
-        history = pd.read_csv(history_path)
-        rows = history[history["epoch"] < first_epoch].to_dict("records")
-
     run = log.start(config, fold, run_dir)
     try:
         for epoch in range(first_epoch, cfg.epochs):
@@ -259,6 +246,24 @@ def fit(
         run.finish({"best_val_score": best_score})
 
 
+def _resume(
+    run_dir: Path,
+    model: nn.Module,
+    ema: AveragedModel,
+    optimizer: Optimizer,
+    scheduler: LRScheduler,
+) -> tuple[int, float, float | None, list[dict[str, float]]]:
+    """(first epoch, best score, peak GPU MiB, history rows) from `last.pt`, or a fresh start."""
+    if not (run_dir / "last.pt").exists():
+        return 0, -math.inf, None, []
+    first_epoch, best_score, peak = load_checkpoint(
+        run_dir / "last.pt", model, ema, optimizer, scheduler
+    )
+    # a crash after the history write but before last.pt would otherwise repeat an epoch
+    history = pd.read_csv(run_dir / "history.csv")
+    return first_epoch, best_score, peak, history[history["epoch"] < first_epoch].to_dict("records")
+
+
 def _write_outputs(
     meta: dict[str, Any],
     run_dir: Path,
@@ -279,14 +284,10 @@ def _write_outputs(
         columns=list(TARGETS),
     )
     oof.loc[val_ds.uids] = probs
-    tmp = run_dir / "oof.csv.tmp"
-    oof.to_csv(tmp)
-    os.replace(tmp, run_dir / "oof.csv")
+    atomic_write(run_dir / "oof.csv", oof.to_csv)
 
     meta |= {
         "train_seconds_per_epoch": float(np.mean([r["train_seconds"] for r in rows])),
         "val_seconds_per_epoch": float(np.mean([r["val_seconds"] for r in rows])),
     }
-    tmp = run_dir / "meta.json.tmp"
-    tmp.write_text(json.dumps(meta, indent=2))
-    os.replace(tmp, run_dir / "meta.json")
+    atomic_write(run_dir / "meta.json", lambda tmp: tmp.write_text(json.dumps(meta, indent=2)))

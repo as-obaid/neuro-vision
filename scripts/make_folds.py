@@ -4,7 +4,7 @@ import argparse
 import hashlib
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Final, Literal
+from typing import Literal
 
 import pandas as pd
 import yaml
@@ -15,7 +15,7 @@ from neurovision.paths import store
 
 N_FOLDS = 5
 SEED = 0
-LABEL_SOURCE: Final[Literal["corrected"]] = "corrected"
+LABEL_SOURCE: Literal["corrected"] = "corrected"
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -44,7 +44,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     folds = make_folds(labels, N_FOLDS, SEED, groups)
 
     folds_csv.parent.mkdir(parents=True, exist_ok=True)
-    folds.rename("fold").to_csv(folds_csv)
+    folds.to_csv(folds_csv)
     manifest = {
         "n_folds": N_FOLDS,
         "seed": SEED,
@@ -61,8 +61,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     print("modality per fold:")
     print(pd.crosstab(folds, labels["Modality"]).to_string())
-    sizes = (groups if groups is not None else pd.Series(range(len(labels)))).value_counts()
-    print(f"groups: {len(sizes)}, largest: {sizes.max()}")
+    if groups is None:
+        print(f"groups: {len(labels)}, largest: 1")
+    else:
+        sizes = groups.value_counts()
+        print(f"groups: {len(sizes)}, largest: {sizes.max()}")
 
 
 if __name__ == "__main__":
