@@ -81,11 +81,11 @@ def test_checkpoint_round_trip(tmp_path: Path) -> None:
     loader = DataLoader(TensorDataset(*_data(2)), batch_size=1)
     train_one_epoch(model, loader, opt, sched, ema, 1, CPU)
     path = tmp_path / "last.pt"
-    save_checkpoint(path, model, ema, opt, sched, epoch=3, best_score=0.7)
+    save_checkpoint(path, model, ema, opt, sched, epoch=3, best_score=0.7, peak_mib=12.5)
     assert not list(tmp_path.glob("*.tmp"))
 
     model2, opt2, sched2, ema2 = _setup()
-    assert load_checkpoint(path, model2, ema2, opt2, sched2) == (4, 0.7)
+    assert load_checkpoint(path, model2, ema2, opt2, sched2) == (4, 0.7, 12.5)
     for a, b in zip(model.state_dict().values(), model2.state_dict().values(), strict=True):
         assert torch.equal(a, b)
     for a, b in zip(ema.state_dict().values(), ema2.state_dict().values(), strict=True):

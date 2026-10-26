@@ -12,6 +12,7 @@ from neurovision.data.labels import TARGETS
 SIZE = 32
 UIDS = [f"s{i:04d}" for i in range(12)]
 EXCLUDED = ("s0003", "s0010")
+REASONS = {"s0003": "error: unreadable", "s0010": "geometry"}
 FOLDS = pd.Series([i % 5 for i in range(12)], index=pd.Index(UIDS, name="SeriesInstanceUID"))
 
 
@@ -41,7 +42,7 @@ def write_store(root: Path) -> None:
         {
             "SeriesInstanceUID": UIDS,
             "status": ["excluded" if u in EXCLUDED else "ok" for u in UIDS],
-            "reason": ["geometry" if u in EXCLUDED else "" for u in UIDS],
+            "reason": [REASONS.get(u, "") for u in UIDS],
         }
     ).to_csv(cache / "index.csv", index=False)
 

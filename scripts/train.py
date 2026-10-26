@@ -28,6 +28,12 @@ def _train_cnn(config: Config, fold: int) -> None:
     labels = load_labels(root, config.labels).loc[folds.index, list(TARGETS)]
     cache = root / "cache" / "b2-128"
     index = load_index(cache)
+    missing = len(folds.index.difference(index.index))
+    if missing:
+        raise SystemExit(
+            f"{missing} of {len(folds)} series have no row in cache/b2-128/index.csv; "
+            "rerun slurm/preprocess.sbatch"
+        )
     ok = set(index.index[index["status"] == "ok"])
 
     def dataset(frame: pd.DataFrame, transform: Compose | None) -> CacheDataset:
@@ -36,16 +42,31 @@ def _train_cnn(config: Config, fold: int) -> None:
 
     train, val = labels[folds != fold], labels[folds == fold]
     assert config.augment is not None
+    train_ds, val_ds = dataset(train, build_augment(config.augment)), dataset(val, None)
+    counts = {
+        "train_used": len(train_ds),
+        "train_excluded": len(train) - len(train_ds),
+        "validation_scored": len(val_ds),
+        "validation_prior_filled": len(val) - len(val_ds),
+        "index_errors": int(index["reason"].fillna("").str.startswith("error:").sum()),
+    }
+    print(
+        f"train {counts['train_used']} used, {counts['train_excluded']} excluded; "
+        f"validation {counts['validation_scored']} scored, "
+        f"{counts['validation_prior_filled']} prior-filled; "
+        f"{counts['index_errors']} index errors"
+    )
     run_dir = root / "runs" / config.name / f"fold{fold}"
     run_dir.mkdir(parents=True, exist_ok=True)
     fit(
         config,
         fold,
         run_dir,
-        dataset(train, build_augment(config.augment)),
-        dataset(val, None),
+        train_ds,
+        val_ds,
         list(val.index),
         train.to_numpy().mean(axis=0),
+        counts,
     )
 
 

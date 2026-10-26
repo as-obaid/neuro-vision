@@ -4,8 +4,9 @@ import json
 import math
 import os
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -98,6 +99,10 @@ def evaluate(
     return p, loss
 
 
+def peak_memory_mib(device: torch.device) -> float | None:
+    return torch.cuda.max_memory_allocated() / 2**20 if device.type == "cuda" else None
+
+
 def atomic_save(path: Path, obj: object) -> None:
     tmp = path.with_name(path.name + ".tmp")
     torch.save(obj, tmp)
@@ -112,6 +117,7 @@ def save_checkpoint(
     scheduler: LRScheduler,
     epoch: int,
     best_score: float,
+    peak_mib: float | None,
 ) -> None:
     """`epoch` is the last completed epoch."""
     atomic_save(
@@ -123,6 +129,7 @@ def save_checkpoint(
             "scheduler": scheduler.state_dict(),
             "epoch": epoch,
             "best_score": best_score,
+            "peak_mib": peak_mib,
         },
     )
 
@@ -133,14 +140,14 @@ def load_checkpoint(
     ema: AveragedModel,
     optimizer: Optimizer,
     scheduler: LRScheduler,
-) -> tuple[int, float]:
-    """Returns (next epoch, best score)."""
+) -> tuple[int, float, float | None]:
+    """Returns (next epoch, best score, peak GPU MiB so far); old files have no peak."""
     state = torch.load(path, map_location="cpu", weights_only=True)
     model.load_state_dict(state["model"])
     ema.load_state_dict(state["ema"])
     optimizer.load_state_dict(state["optimizer"])
     scheduler.load_state_dict(state["scheduler"])
-    return state["epoch"] + 1, state["best_score"]
+    return state["epoch"] + 1, state["best_score"], state.get("peak_mib")
 
 
 def train_loader(
@@ -177,10 +184,14 @@ def fit(
     val_ds: CacheDataset,
     val_uids: list[str],
     prior: np.ndarray,
+    counts: Mapping[str, int],
 ) -> None:
     """Train one fold, resuming from `run_dir/last.pt`; write the run directory files."""
     cfg = config.train
     assert cfg is not None
+    if (run_dir / "meta.json").exists():  # written last: the run is complete
+        return
+    meta = run_meta(config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pin = device.type == "cuda"
     torch.manual_seed(config.seed)
@@ -193,15 +204,13 @@ def fit(
     ema = make_ema(model, cfg.ema_decay)
     valid = val_loader(val_ds, cfg, pin)
 
-    first_epoch, best_score = 0, -math.inf
+    first_epoch, best_score, peak = 0, -math.inf, None
     history_path = run_dir / "history.csv"
     rows: list[dict[str, float]] = []
     if (run_dir / "last.pt").exists():
-        first_epoch, best_score = load_checkpoint(
+        first_epoch, best_score, peak = load_checkpoint(
             run_dir / "last.pt", model, ema, optimizer, scheduler
         )
-        if first_epoch >= cfg.epochs:
-            return
         # a crash after the history write but before last.pt would otherwise repeat an epoch
         history = pd.read_csv(history_path)
         rows = history[history["epoch"] < first_epoch].to_dict("records")
@@ -238,16 +247,20 @@ def fit(
             if val_score > best_score:
                 best_score = val_score
                 atomic_save(run_dir / "best.pt", ema.module.state_dict())
+            current = peak_memory_mib(device)
+            if current is not None:
+                peak = max(peak or 0.0, current)
             save_checkpoint(
-                run_dir / "last.pt", model, ema, optimizer, scheduler, epoch, best_score
+                run_dir / "last.pt", model, ema, optimizer, scheduler, epoch, best_score, peak
             )
-        _write_outputs(config, run_dir, val_ds, val_uids, prior, valid, rows, device)
+        meta |= {"counts": dict(counts), "peak_gpu_memory_mib": peak}
+        _write_outputs(meta, run_dir, val_ds, val_uids, prior, valid, rows, device)
     finally:
         run.finish({"best_val_score": best_score})
 
 
 def _write_outputs(
-    config: Config,
+    meta: dict[str, Any],
     run_dir: Path,
     val_ds: CacheDataset,
     val_uids: list[str],
@@ -256,6 +269,7 @@ def _write_outputs(
     rows: list[dict[str, float]],
     device: torch.device,
 ) -> None:
+    """oof.csv first, meta.json last: meta.json marks the run complete."""
     best = build_model()
     best.load_state_dict(torch.load(run_dir / "best.pt", map_location="cpu", weights_only=True))
     probs, _ = evaluate(best, valid, device)
@@ -265,17 +279,14 @@ def _write_outputs(
         columns=list(TARGETS),
     )
     oof.loc[val_ds.uids] = probs
-    oof.to_csv(run_dir / "oof.csv")
+    tmp = run_dir / "oof.csv.tmp"
+    oof.to_csv(tmp)
+    os.replace(tmp, run_dir / "oof.csv")
 
-    # a resumed run only saw its own epochs' memory; the earlier peak is in the old meta.json
-    peaks = [torch.cuda.max_memory_allocated() / 2**20] if device.type == "cuda" else []
-    meta_path = run_dir / "meta.json"
-    if meta_path.exists():
-        stored = json.loads(meta_path.read_text()).get("peak_gpu_memory_mib")
-        peaks += [stored] if stored is not None else []
-    meta = run_meta(config) | {
+    meta |= {
         "train_seconds_per_epoch": float(np.mean([r["train_seconds"] for r in rows])),
         "val_seconds_per_epoch": float(np.mean([r["val_seconds"] for r in rows])),
-        "peak_gpu_memory_mib": max(peaks) if peaks else None,
     }
-    meta_path.write_text(json.dumps(meta, indent=2))
+    tmp = run_dir / "meta.json.tmp"
+    tmp.write_text(json.dumps(meta, indent=2))
+    os.replace(tmp, run_dir / "meta.json")

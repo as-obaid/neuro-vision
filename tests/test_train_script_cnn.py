@@ -63,3 +63,29 @@ def test_cnn_requires_a_fold_that_exists(setup) -> None:
         with pytest.raises(SystemExit):
             train.main(argv)
     assert not (store / "runs").exists()
+
+
+def test_series_missing_from_the_index_are_refused(setup) -> None:
+    train, _, store, config = setup
+    index_path = store / "cache" / "b2-128" / "index.csv"
+    index = pd.read_csv(index_path)
+    index.iloc[1:].to_csv(index_path, index=False)
+    with pytest.raises(SystemExit, match=r"1 of 12 series have no row in cache/b2-128/index.csv"):
+        train.main([config, "--fold", "0"])
+    assert not (store / "runs").exists()
+
+
+def test_counts_are_printed_and_stored(setup, capsys: pytest.CaptureFixture[str]) -> None:
+    train, _, store, config = setup
+    train.main([config, "--fold", "0"])
+    counts = json.loads((store / "runs" / "b2" / "fold0" / "meta.json").read_text())["counts"]
+    assert counts == {
+        "train_used": 8,
+        "train_excluded": 1,
+        "validation_scored": 2,
+        "validation_prior_filled": 1,
+        "index_errors": 1,
+    }
+    out = capsys.readouterr().out
+    assert "train 8 used, 1 excluded; validation 2 scored, 1 prior-filled; 1 index errors" in out
+    assert "s00" not in out

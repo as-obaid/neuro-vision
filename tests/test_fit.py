@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from neurovision.train.loop import fit, train_loader, val_loader
 from tests.cnn_fakes import fold0_datasets, write_config, write_store
 
 PRIOR = np.full(14, 0.3)
+COUNTS = {"train_used": 8}
 
 
 class Stamp(Randomizable):
@@ -37,13 +39,22 @@ def _fit(tmp_path: Path, run: str, epochs: int = 2) -> Path:
     train_ds, val_ds, val_uids = fold0_datasets(tmp_path / "store")
     run_dir = tmp_path / run
     run_dir.mkdir()
-    fit(config, 0, run_dir, train_ds, val_ds, val_uids, PRIOR)
+    fit(config, 0, run_dir, train_ds, val_ds, val_uids, PRIOR, COUNTS)
     return run_dir
 
 
 def _fit_again(tmp_path: Path, run: str) -> None:
     train_ds, val_ds, val_uids = fold0_datasets(tmp_path / "store")
-    fit(load_config(tmp_path / "b2.yaml"), 0, tmp_path / run, train_ds, val_ds, val_uids, PRIOR)
+    fit(
+        load_config(tmp_path / "b2.yaml"),
+        0,
+        tmp_path / run,
+        train_ds,
+        val_ds,
+        val_uids,
+        PRIOR,
+        COUNTS,
+    )
 
 
 def test_workers_and_epochs_draw_different_augmentation(tmp_path: Path) -> None:
@@ -132,22 +143,105 @@ def _interrupt_in_epoch_two(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(loop, "train_one_epoch", stop)
 
 
-def test_resumed_meta_keeps_stored_peak_and_all_epoch_times(
+def test_resumed_meta_keeps_checkpointed_peak_and_all_epoch_times(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    real = loop.train_one_epoch
+    monkeypatch.setattr(loop, "peak_memory_mib", lambda device: 500.0)
     _interrupt_in_epoch_two(monkeypatch)
     with pytest.raises(KeyboardInterrupt):
         _fit(tmp_path, "run")
-    monkeypatch.undo()
-    monkeypatch.setenv("WANDB_PROJECT", "test-project")
-    monkeypatch.setenv("WANDB_SILENT", "true")
-    (tmp_path / "run" / "meta.json").write_text('{"peak_gpu_memory_mib": 999.0}')
+    monkeypatch.setattr(loop, "train_one_epoch", real)
+    monkeypatch.setattr(loop, "peak_memory_mib", lambda device: 300.0)
     _fit_again(tmp_path, "run")
     meta = json.loads((tmp_path / "run" / "meta.json").read_text())
     history = pd.read_csv(tmp_path / "run" / "history.csv")
-    assert meta["peak_gpu_memory_mib"] == 999.0
+    assert meta["peak_gpu_memory_mib"] == 500.0
     assert meta["train_seconds_per_epoch"] == pytest.approx(history["train_seconds"].mean())
     assert meta["val_seconds_per_epoch"] == pytest.approx(history["val_seconds"].mean())
+
+
+def test_checkpoint_without_a_peak_loads_as_none(tmp_path: Path) -> None:
+    run = _fit(tmp_path, "run")
+    state = torch.load(run / "last.pt", weights_only=True)
+    del state["peak_mib"]
+    torch.save(state, run / "last.pt")
+    (run / "meta.json").unlink()
+    _fit_again(tmp_path, "run")
+    assert json.loads((run / "meta.json").read_text())["peak_gpu_memory_mib"] is None
+
+
+def test_outputs_failure_after_the_last_checkpoint_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    straight = _fit(tmp_path, "straight")
+    real = loop._write_outputs
+    calls = []
+
+    def fail_once(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("killed")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "_write_outputs", fail_once)
+    with pytest.raises(RuntimeError, match="killed"):
+        _fit(tmp_path, "run")
+    assert not (tmp_path / "run" / "meta.json").exists()
+    _fit_again(tmp_path, "run")
+    run = tmp_path / "run"
+    assert (run / "meta.json").exists()
+    pd.testing.assert_frame_equal(
+        pd.read_csv(run / "oof.csv"), pd.read_csv(straight / "oof.csv"), atol=1e-6, rtol=0
+    )
+    assert len(pd.read_csv(run / "history.csv")) == 2
+
+
+@pytest.mark.parametrize("name", ["oof.csv", "meta.json"])
+def test_torn_output_write_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    real = Path.write_text
+
+    def torn(self: Path, text: str, *args, **kwargs):
+        real(self, text[:5], *args, **kwargs)
+        if self.name == name + ".tmp":
+            raise RuntimeError("disk full")
+        return real(self, text, *args, **kwargs)
+
+    real_csv = pd.DataFrame.to_csv
+
+    def torn_csv(self, path=None, *args, **kwargs):
+        real_csv(self, path, *args, **kwargs)
+        if str(path).endswith("oof.csv.tmp"):
+            raise RuntimeError("disk full")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", torn_csv)
+    monkeypatch.setattr(Path, "write_text", torn)
+    with pytest.raises(RuntimeError, match="disk full"):
+        _fit(tmp_path, "run")
+    assert not (tmp_path / "run" / name).exists()
+
+
+def test_run_meta_is_taken_before_the_first_epoch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = loop.train_one_epoch
+    first_epoch_start: list[datetime] = []
+
+    def stamped(*args, **kwargs):
+        first_epoch_start.append(datetime.now(UTC))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "train_one_epoch", stamped)
+    run = _fit(tmp_path, "run")
+    started = datetime.fromisoformat(json.loads((run / "meta.json").read_text())["started_at"])
+    assert started <= first_epoch_start[0]
+
+
+def test_meta_carries_the_counts(tmp_path: Path) -> None:
+    run = _fit(tmp_path, "run")
+    assert json.loads((run / "meta.json").read_text())["counts"] == COUNTS
 
 
 def test_failed_best_write_leaves_no_best_and_finishes_wandb(
