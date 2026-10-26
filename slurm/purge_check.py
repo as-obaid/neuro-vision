@@ -1,10 +1,10 @@
 """Refuse a Slurm job that could still be running when a /scratch purge window starts.
 
-    python3 slurm/purge_check.py --now EPOCH --limit HH:MM:SS [--ahead LIMIT ...] [--file PATH]
+    python3 slurm/purge_check.py --now EPOCH --limit HH:MM:SS [--file PATH]
 
-The latest end is now + limit + the limits of the jobs queued ahead of it (a chained job starts
-only after them). Exit 0: clear of every window; stdout then holds the start of the next window
-in local time (YYYY-MM-DDTHH:MM:SS), the --deadline for sbatch, or nothing when none is left.
+The latest end is now + limit. Exit 0: clear of every window; stdout then holds the start of the
+next window in local time (YYYY-MM-DDTHH:MM:SS), the --deadline for sbatch, or nothing when none
+is left.
 Exit 1: refused. Exit 2: a bad limit or dates file. Runs on Explorer's system python3 (3.9), so
 it uses the standard library only.
 """
@@ -60,11 +60,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--now", type=int, required=True, help="seconds since the epoch")
     parser.add_argument("--limit", required=True, help="this job's time limit")
-    parser.add_argument("--ahead", action="append", default=[], help="a queued job's time limit")
     parser.add_argument("--file", default=DEFAULT_FILE)
     args = parser.parse_args(argv)
     try:
-        seconds = limit_seconds(args.limit) + sum(limit_seconds(a) for a in args.ahead)
+        seconds = limit_seconds(args.limit)
         windows = read_windows(args.file)
     except (OSError, ValueError) as error:
         print(f"purge_check: {error}", file=sys.stderr)

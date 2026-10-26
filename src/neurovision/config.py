@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, PositiveFloat, PositiveInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, model_validator
 
 
 class _Frozen(BaseModel):
@@ -22,20 +22,36 @@ class TrainConfig(_Frozen):
     batch_size: PositiveInt
     accum_steps: PositiveInt
     lr: PositiveFloat
-    weight_decay: float
-    warmup_epochs: int
-    ema_decay: float
+    weight_decay: float = Field(ge=0)
+    warmup_epochs: int = Field(ge=0)
+    ema_decay: float = Field(gt=0, lt=1)
     loss_weights: Literal["uniform"]
-    num_workers: int
+    num_workers: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _warmup_fits_in_training(self) -> Self:
+        if self.warmup_epochs >= self.epochs:
+            raise ValueError("warmup_epochs must be less than epochs")
+        return self
 
 
 class AugmentConfig(_Frozen):
-    prob: float
-    noise_std: float
+    prob: float = Field(ge=0, le=1)
+    noise_std: float = Field(ge=0)
     gamma: tuple[PositiveFloat, PositiveFloat]
-    rotate_deg: float
-    scale: float
+    rotate_deg: float = Field(ge=0)
+    scale: float = Field(ge=0, lt=1)
     lowres_zoom: tuple[PositiveFloat, PositiveFloat]
+
+    @model_validator(mode="after")
+    def _ranges_are_ordered(self) -> Self:
+        for name in ("gamma", "lowres_zoom"):
+            low, high = getattr(self, name)
+            if low > high:
+                raise ValueError(f"{name} must be (low, high) with low <= high")
+        if self.lowres_zoom[1] > 1:
+            raise ValueError("lowres_zoom high must be at most 1")
+        return self
 
 
 class Config(_Frozen):

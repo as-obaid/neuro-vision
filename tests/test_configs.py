@@ -131,6 +131,38 @@ def test_non_positive_value_raises(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [
+        ("train", "weight_decay", -0.1),
+        ("train", "warmup_epochs", -1),
+        ("train", "warmup_epochs", 30),
+        ("train", "ema_decay", 0),
+        ("train", "ema_decay", 1),
+        ("train", "ema_decay", 1.5),
+        ("train", "num_workers", -1),
+        ("augment", "prob", -0.1),
+        ("augment", "prob", 1.1),
+        ("augment", "noise_std", -0.1),
+        ("augment", "rotate_deg", -1),
+        ("augment", "scale", -0.1),
+        ("augment", "scale", 1),
+        ("augment", "gamma", [1.5, 0.7]),
+        ("augment", "gamma", [0, 1.5]),
+        ("augment", "lowres_zoom", [1.0, 0.5]),
+        ("augment", "lowres_zoom", [0.5, 1.5]),
+    ],
+)
+def test_out_of_range_cnn_value_raises(
+    tmp_path: Path, section: str, key: str, value: object
+) -> None:
+    sections = {"train": dict(TRAIN), "augment": dict(AUGMENT)}
+    sections[section][key] = value
+    write(tmp_path / "x.yaml", {"kind": "cnn", "seed": 0, "labels": "corrected", **sections})
+    with pytest.raises(ValidationError):
+        load_config(tmp_path / "x.yaml")
+
+
+@pytest.mark.parametrize(
     "sections",
     [
         {"kind": "prior", "gbm": GBM},

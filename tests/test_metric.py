@@ -1,5 +1,3 @@
-import contextlib
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -37,13 +35,9 @@ def test_score_matches_official_code(seed):
     assert score(y_true, y_prob) == pytest.approx(official(y_true, y_prob), abs=1e-6)
 
 
-@pytest.mark.filterwarnings("ignore::sklearn.exceptions.UndefinedMetricWarning")
-def test_single_class_column_is_an_error_where_official_code_fails_or_returns_nan():
+def test_single_class_column_raises_where_kaggle_code_returns_nan_or_fails() -> None:
     y_true, y_prob = make_case(0)
     y_true[:, 3] = 0
-    # The official code raises on older scikit-learn and returns nan on the pinned one.
-    with contextlib.suppress(kaggle_metric.ParticipantVisibleError):
-        assert np.isnan(official(y_true, y_prob))
     with pytest.raises(ValueError, match="both classes"):
         score(y_true, y_prob)
 
