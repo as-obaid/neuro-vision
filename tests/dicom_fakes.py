@@ -36,12 +36,21 @@ def write_series(
     frame_of_reference_uid: str | None = None,
     patient_id: str = "P0",
     study_date: str = "20200101",
+    pixels: np.ndarray | None = None,
+    top_level_geometry: bool = True,
+    frame_orientation: bool = True,
+    photometric: str = "MONOCHROME2",
+    samples_per_pixel: int = 1,
 ) -> list[Path]:
     """Write one series into `folder` and return the files, sorted by name.
 
     `positions` is one ImagePositionPatient per slice; by default slices stack along the plane
     normal, `slice_spacing` apart. With `multiframe` all slices go into one file that carries
-    NumberOfFrames, the first slice's position, and every slice's position per frame.
+    NumberOfFrames, the first slice's position, and every slice's position, orientation and pixel
+    spacing per frame. `top_level_geometry=False` leaves orientation, spacing and position out of
+    the top level; `frame_orientation=False` leaves orientation and spacing out of the frame
+    groups too (as when they sit in the stripped shared groups).
+    `pixels` (slices, rows, cols) replaces the default pattern.
     """
     n, rows, cols = shape
     row_dir = np.array(orientation[:3], dtype=float)
@@ -54,26 +63,31 @@ def write_series(
         study_uid or generate_uid(),
         frame_of_reference_uid or generate_uid(),
     )
-    pixels = fake_pixels(shape)
+    pixels = fake_pixels(shape) if pixels is None else pixels
     folder.mkdir(parents=True, exist_ok=True)
     groups = [(0, pixels)] if multiframe else [(i, pixels[i : i + 1]) for i in range(n)]
     paths = []
     for index, data in groups:
         path = folder / f"{index:04d}.dcm"
         ds = _dataset(path, uids, patient_id, study_date)
+        ds.PhotometricInterpretation = photometric
+        ds.SamplesPerPixel = samples_per_pixel
         ds.Rows, ds.Columns = rows, cols
-        ds.PixelSpacing = list(pixel_spacing)
         ds.SliceThickness = slice_spacing
         ds.SpacingBetweenSlices = slice_spacing
-        ds.ImageOrientationPatient = list(orientation)
-        ds.ImagePositionPatient = list(positions[index])
+        if top_level_geometry:
+            ds.PixelSpacing = list(pixel_spacing)
+            ds.ImageOrientationPatient = list(orientation)
+            ds.ImagePositionPatient = list(positions[index])
         ds.InstanceNumber = index + 1
         ds.RescaleSlope = rescale_slope
         ds.RescaleIntercept = rescale_intercept
         ds.RescaleType = "HU"
         if multiframe:
             ds.NumberOfFrames = n
-            ds.PerFrameFunctionalGroupsSequence = [_frame_group(p) for p in positions]
+            ds.PerFrameFunctionalGroupsSequence = [
+                _frame_group(p, orientation, pixel_spacing, frame_orientation) for p in positions
+            ]
         ds.PixelData = data.tobytes()
         if rle:
             ds.compress(RLELossless)
@@ -82,11 +96,21 @@ def write_series(
     return paths
 
 
-def _frame_group(position: Sequence[float]) -> Dataset:
-    plane = Dataset()
-    plane.ImagePositionPatient = list(position)
+def _frame_group(
+    position: Sequence[float],
+    orientation: Sequence[float],
+    pixel_spacing: Sequence[float],
+    with_orientation: bool,
+) -> Dataset:
+    place, plane, measures = Dataset(), Dataset(), Dataset()
+    place.ImagePositionPatient = list(position)
+    plane.ImageOrientationPatient = list(orientation)
+    measures.PixelSpacing = list(pixel_spacing)
     group = Dataset()
-    group.PlanePositionSequence = [plane]
+    group.PlanePositionSequence = [place]
+    if with_orientation:
+        group.PlaneOrientationSequence = [plane]
+        group.PixelMeasuresSequence = [measures]
     return group
 
 
@@ -108,8 +132,6 @@ def _dataset(
     ds.PatientName = "Synthetic^Test"
     ds.StudyDate = study_date
     ds.Modality = "CT"
-    ds.SamplesPerPixel = 1
-    ds.PhotometricInterpretation = "MONOCHROME2"
     ds.BitsAllocated = 16
     ds.BitsStored = 16
     ds.HighBit = 15
