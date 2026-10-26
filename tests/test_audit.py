@@ -1,4 +1,3 @@
-import importlib
 import json
 from pathlib import Path
 from types import ModuleType
@@ -7,8 +6,7 @@ import pandas as pd
 import pytest
 
 from neurovision.data.labels import TARGETS
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+from tests.script_loader import load_script
 
 # uid, Modality, PatientAge, PatientSex, positive targets
 ROWS = [
@@ -18,11 +16,6 @@ ROWS = [
     ("s4", "MRA", 85, None, [TARGETS[13]]),
     ("s5", "MRI T2", None, "Male", []),
 ]
-
-
-def load_script(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    monkeypatch.syspath_prepend(str(SCRIPTS))
-    return importlib.import_module("audit")
 
 
 def make_store(root: Path, complete: bool = True, skip: str | None = None) -> Path:
@@ -55,7 +48,7 @@ def run_audit(module: ModuleType, store: Path, monkeypatch: pytest.MonkeyPatch, 
 
 def test_audit_counts_and_json(tmp_path, monkeypatch, capsys):
     store = make_store(tmp_path)
-    assert run_audit(load_script(monkeypatch), store, monkeypatch) == 0
+    assert run_audit(load_script("audit"), store, monkeypatch) == 0
     out = json.loads((store / "logs" / "audit.json").read_text())
     assert out["n_series"] == 5
     assert out["modality"] == {"CTA": 2, "MRA": 2, "MRI T2": 1}
@@ -75,7 +68,7 @@ def test_audit_counts_and_json(tmp_path, monkeypatch, capsys):
 
 def test_verify_counts(tmp_path, monkeypatch, capsys):
     store = make_store(tmp_path)
-    assert run_audit(load_script(monkeypatch), store, monkeypatch, "--verify") == 0
+    assert run_audit(load_script("audit"), store, monkeypatch, "--verify") == 0
     out = capsys.readouterr().out
     for line in (
         "present: 5",
@@ -92,19 +85,19 @@ def test_verify_counts(tmp_path, monkeypatch, capsys):
 def test_verify_refuses_without_complete(tmp_path, monkeypatch):
     store = make_store(tmp_path, complete=False)
     with pytest.raises(SystemExit, match=r"\.complete"):
-        run_audit(load_script(monkeypatch), store, monkeypatch, "--verify")
+        run_audit(load_script("audit"), store, monkeypatch, "--verify")
 
 
 def test_verify_fails_on_missing_series(tmp_path, monkeypatch, capsys):
     store = make_store(tmp_path, skip="s3")
-    assert run_audit(load_script(monkeypatch), store, monkeypatch, "--verify") == 1
+    assert run_audit(load_script("audit"), store, monkeypatch, "--verify") == 1
     assert "missing: 1" in capsys.readouterr().out
 
 
 def test_verify_fails_on_empty_series(tmp_path, monkeypatch, capsys):
     store = make_store(tmp_path)
     (store / "raw" / "series" / "s2" / "a.dcm").unlink()
-    assert run_audit(load_script(monkeypatch), store, monkeypatch, "--verify") == 1
+    assert run_audit(load_script("audit"), store, monkeypatch, "--verify") == 1
     assert "empty: 1" in capsys.readouterr().out
 
 
@@ -112,7 +105,7 @@ def test_verify_reports_missing_segmentations_folder(tmp_path, monkeypatch, caps
     store = make_store(tmp_path)
     (store / "raw" / "segmentations" / "x.nii").unlink()
     (store / "raw" / "segmentations").rmdir()
-    assert run_audit(load_script(monkeypatch), store, monkeypatch, "--verify") == 0
+    assert run_audit(load_script("audit"), store, monkeypatch, "--verify") == 0
     out = capsys.readouterr().out
     assert "segmentation files: 0" in out
     assert "warning: raw/segmentations is missing" in out

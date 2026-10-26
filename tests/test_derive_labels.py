@@ -1,7 +1,4 @@
-import importlib
-import sys
 from pathlib import Path
-from types import ModuleType
 
 import nibabel as nib
 import numpy as np
@@ -9,8 +6,8 @@ import pandas as pd
 import pytest
 
 from neurovision.data.labels import TARGETS
+from tests.script_loader import import_script, load_script
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 MASKS = "labels/shi2026-masks"
 FOLDERS = ("labelsTr_26classes_in_orig_space", "labelsTr_multiframe_cor_sag")
 
@@ -25,8 +22,7 @@ def write_mask(store: Path, folder: str, uid: str, classes: tuple[int, ...]) -> 
 
 
 def derive(store: Path, monkeypatch: pytest.MonkeyPatch, expected: dict[str, int]) -> int:
-    monkeypatch.syspath_prepend(str(SCRIPTS))
-    module: ModuleType = importlib.import_module("derive_labels")
+    module = import_script("derive_labels", monkeypatch)
     monkeypatch.setattr(module, "EXPECTED_COUNTS", expected)
     monkeypatch.setenv("NV_STORE", str(store))
     monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
@@ -98,11 +94,7 @@ def test_missing_mask_folder_fails(
 
 
 def test_non_integer_mask_is_refused(tmp_path: Path) -> None:
-    sys.path.insert(0, str(SCRIPTS))
-    try:
-        module = importlib.import_module("derive_labels")
-    finally:
-        sys.path.remove(str(SCRIPTS))
+    module = load_script("derive_labels")
     path = tmp_path / "m.nii.gz"
     nib.save(nib.Nifti1Image(np.full((2, 2, 2), 14.0, dtype=np.float32), np.eye(4)), path)
     with pytest.raises(ValueError, match="m.nii.gz"):

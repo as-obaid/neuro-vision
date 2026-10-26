@@ -1,22 +1,11 @@
-import importlib
-import os
 from pathlib import Path
-from types import ModuleType
 
 import pandas as pd
 import pytest
 
 from neurovision.data.dicom import TEST_TAGS
 from tests.dicom_fakes import write_series
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-
-
-def load_script(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    # Importable by name so pool workers can import it too.
-    monkeypatch.syspath_prepend(str(SCRIPTS))
-    monkeypatch.setenv("PYTHONPATH", str(SCRIPTS) + os.pathsep + os.environ.get("PYTHONPATH", ""))
-    return importlib.import_module("scan_headers")
+from tests.script_loader import import_script
 
 
 def make_store(root: Path) -> Path:
@@ -58,7 +47,7 @@ def test_scan_writes_headers_and_prints_counts(
     store = make_store(tmp_path)
     monkeypatch.setenv("NV_STORE", str(store))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
-    script = load_script(monkeypatch)
+    script = import_script("scan_headers", monkeypatch)
 
     script.main([])
 
@@ -94,7 +83,7 @@ def test_scan_refuses_without_complete_marker(
     (store / "raw" / ".complete").unlink()
     monkeypatch.setenv("NV_STORE", str(store))
     with pytest.raises(SystemExit, match=r"\.complete"):
-        load_script(monkeypatch).main([])
+        import_script("scan_headers", monkeypatch).main([])
     assert not (store / "labels").exists()
 
 
@@ -107,7 +96,7 @@ def test_scan_records_a_bad_series_and_continues(
         path.unlink()
     monkeypatch.setenv("NV_STORE", str(store))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
-    load_script(monkeypatch).main([])
+    import_script("scan_headers", monkeypatch).main([])
     headers = pd.read_csv(store / "labels" / "headers.csv", dtype=str, keep_default_na=False)
     by_uid = headers.set_index("SeriesInstanceUID")
     assert by_uid.loc["1.2.3.1", "error"] == ""

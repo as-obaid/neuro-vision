@@ -1,5 +1,3 @@
-import importlib
-import os
 from collections.abc import Sequence
 from concurrent.futures import Future
 from concurrent.futures.process import BrokenProcessPool
@@ -23,8 +21,8 @@ from neurovision.data.preprocess import (
     series_geometry,
 )
 from tests.dicom_fakes import fake_pixels, write_series
+from tests.script_loader import import_script
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 SHAPE = (20, 16, 16)
 KW = {"shape": SHAPE, "pixel_spacing": (1.0, 1.0), "slice_spacing": 2.0}
 
@@ -248,18 +246,11 @@ def test_script_records_unexpected_errors_and_continues(
     (root / "raw" / ".complete").touch()
     monkeypatch.setenv("NV_STORE", str(root))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
-    load_script(monkeypatch).main([])
+    import_script("preprocess", monkeypatch).main([])
     index = pd.read_csv(root / "cache" / "b2-128" / "index.csv").set_index("SeriesInstanceUID")
     assert index.loc["1.2.1", "status"] == "ok"
     assert index.loc["1.2.2", "status"] == "excluded"
     assert str(index.loc["1.2.2", "reason"]).startswith("error: ")
-
-
-def load_script(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    # Importable by name so pool workers can import it too.
-    monkeypatch.syspath_prepend(str(SCRIPTS))
-    monkeypatch.setenv("PYTHONPATH", str(SCRIPTS) + os.pathsep + os.environ.get("PYTHONPATH", ""))
-    return importlib.import_module("preprocess")
 
 
 def test_script_writes_cache_and_index_and_resumes(
@@ -276,7 +267,7 @@ def test_script_writes_cache_and_index_and_resumes(
     (root / "raw" / ".complete").touch()
     monkeypatch.setenv("NV_STORE", str(root))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
-    script = load_script(monkeypatch)
+    script = import_script("preprocess", monkeypatch)
 
     script.main([])
     cache = root / "cache" / "b2-128"
@@ -353,7 +344,7 @@ def make_raw(root: Path, uids: list[str], **kw: object) -> Path:
 def run_script(root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     monkeypatch.setenv("NV_STORE", str(root))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
-    script = load_script(monkeypatch)
+    script = import_script("preprocess", monkeypatch)
     script.main([])
     return script
 
@@ -365,7 +356,7 @@ def test_script_refuses_without_complete_marker(
     (tmp_path / "raw" / ".complete").unlink()
     monkeypatch.setenv("NV_STORE", str(tmp_path))
     with pytest.raises(SystemExit, match=r"\.complete"):
-        load_script(monkeypatch).main([])
+        import_script("preprocess", monkeypatch).main([])
     assert not (tmp_path / "cache").exists()
 
 
@@ -374,7 +365,7 @@ def test_resume_retries_error_rows_and_keeps_geometry_exclusions(
 ) -> None:
     index = make_raw(tmp_path, ["1.2.1", "1.2.2"])
     index.parent.mkdir(parents=True)
-    script = load_script(monkeypatch)
+    script = import_script("preprocess", monkeypatch)
     rows = [
         {"SeriesInstanceUID": "1.2.1", "status": "excluded", "reason": "error: OSError"},
         {"SeriesInstanceUID": "1.2.2", "status": "excluded", "reason": "slice gap"},
@@ -395,7 +386,7 @@ def test_index_gets_exactly_one_header(
 ) -> None:
     index = make_raw(tmp_path, ["1.2.1"])
     index.parent.mkdir(parents=True)
-    script = load_script(monkeypatch)
+    script = import_script("preprocess", monkeypatch)
     index.write_text("" if content == "" else ",".join(script.COLUMNS) + "\n")
     run_script(tmp_path, monkeypatch)
     lines = index.read_text().splitlines()
@@ -408,7 +399,7 @@ def test_resume_tolerates_a_trailing_partial_line(
 ) -> None:
     index = make_raw(tmp_path, ["1.2.1", "1.2.2"])
     index.parent.mkdir(parents=True)
-    script = load_script(monkeypatch)
+    script = import_script("preprocess", monkeypatch)
     done = {"SeriesInstanceUID": "1.2.1", "status": "excluded", "reason": "slice gap"}
     pd.DataFrame([done], columns=list(script.COLUMNS)).to_csv(index, index=False)
     with index.open("a") as handle:
@@ -452,7 +443,7 @@ def test_dead_worker_marks_series_and_the_run_continues(
     index = make_raw(tmp_path, ["1.2.1", "1.2.2", "1.2.3"])
     monkeypatch.setenv("NV_STORE", str(tmp_path))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
-    script = load_script(monkeypatch)
+    script = import_script("preprocess", monkeypatch)
     monkeypatch.setattr(script, "ProcessPoolExecutor", KillingPool)
     script.main([])
     table = pd.read_csv(index, dtype=str, keep_default_na=False).set_index("SeriesInstanceUID")
