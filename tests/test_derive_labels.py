@@ -1,7 +1,7 @@
-import os
-import subprocess
+import importlib
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import nibabel as nib
 import numpy as np
@@ -10,8 +10,7 @@ import pytest
 
 from neurovision.data.labels import TARGETS
 
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "derive_labels.py"
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 MASKS = "labels/shi2026-masks"
 FOLDERS = ("labelsTr_26classes_in_orig_space", "labelsTr_multiframe_cor_sag")
 
@@ -25,18 +24,30 @@ def write_mask(store: Path, folder: str, uid: str, classes: tuple[int, ...]) -> 
     nib.save(nib.Nifti1Image(data, np.eye(4)), out / f"{uid}.nii.gz")
 
 
-def derive(store: Path) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "NV_STORE": str(store)}
-    env.pop("SLURM_CPUS_PER_TASK", None)
-    return subprocess.run([sys.executable, str(SCRIPT)], env=env, capture_output=True, text=True)
+def derive(store: Path, monkeypatch: pytest.MonkeyPatch, expected: dict[str, int]) -> int:
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    module: ModuleType = importlib.import_module("derive_labels")
+    monkeypatch.setattr(module, "EXPECTED_COUNTS", expected)
+    monkeypatch.setenv("NV_STORE", str(store))
+    monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+    try:
+        module.main([])
+    except SystemExit as exc:
+        return 1 if isinstance(exc.code, str) else int(exc.code or 0)
+    return 0
 
 
-def test_classes_map_to_targets_and_aneurysm_present_is_or(tmp_path: Path) -> None:
+def counts(a: int, b: int) -> dict[str, int]:
+    return {FOLDERS[0]: a, FOLDERS[1]: b}
+
+
+def test_classes_map_to_targets_and_aneurysm_present_is_or(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     write_mask(tmp_path, FOLDERS[0], "b", (3, 14, 26))  # vessel class 3 is ignored
     write_mask(tmp_path, FOLDERS[1], "a", (20,))
     write_mask(tmp_path, FOLDERS[0], "c", (1, 13))  # vessels only
-    done = derive(tmp_path)
-    assert done.returncode == 0, done.stderr
+    assert derive(tmp_path, monkeypatch, counts(2, 1)) == 0
     out = pd.read_csv(tmp_path / "labels" / "corrected.csv")
     assert list(out.columns) == ["SeriesInstanceUID", *TARGETS]
     assert list(out["SeriesInstanceUID"]) == ["a", "b", "c"]
@@ -47,22 +58,52 @@ def test_classes_map_to_targets_and_aneurysm_present_is_or(tmp_path: Path) -> No
         assert set(row.unique()) <= {0, 1}
 
 
-def test_prints_counts_only(tmp_path: Path) -> None:
+def test_prints_counts_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     write_mask(tmp_path, FOLDERS[0], "secret-uid", (14,))
     write_mask(tmp_path, FOLDERS[1], "other-uid", (15,))
-    done = derive(tmp_path)
-    assert "secret-uid" not in done.stdout + done.stderr
-    assert "2" in done.stdout
+    assert derive(tmp_path, monkeypatch, counts(1, 1)) == 0
+    out = capsys.readouterr().out
+    assert "secret-uid" not in out
+    assert out.splitlines() == [
+        f"{FOLDERS[0]}: 1 masks",
+        f"{FOLDERS[1]}: 1 masks",
+        "wrote 2 series, 2 with an aneurysm",
+    ]
 
 
-def test_same_series_in_both_folders_fails(tmp_path: Path) -> None:
+def test_count_differing_from_manifest_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_mask(tmp_path, FOLDERS[0], "a", (14,))
+    write_mask(tmp_path, FOLDERS[1], "b", (15,))
+    assert derive(tmp_path, monkeypatch, counts(2, 1)) == 1
+    assert not (tmp_path / "labels" / "corrected.csv").exists()
+
+
+def test_same_series_in_both_folders_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     write_mask(tmp_path, FOLDERS[0], "a", (14,))
     write_mask(tmp_path, FOLDERS[1], "a", (15,))
-    assert derive(tmp_path).returncode != 0
+    assert derive(tmp_path, monkeypatch, counts(1, 1)) == 1
 
 
 @pytest.mark.parametrize("folder", FOLDERS)
-def test_missing_mask_folder_fails(tmp_path: Path, folder: str) -> None:
+def test_missing_mask_folder_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, folder: str
+) -> None:
     other = FOLDERS[1] if folder == FOLDERS[0] else FOLDERS[0]
     write_mask(tmp_path, other, "a", (14,))
-    assert derive(tmp_path).returncode != 0
+    assert derive(tmp_path, monkeypatch, {other: 1}) == 1
+
+
+def test_non_integer_mask_is_refused(tmp_path: Path) -> None:
+    sys.path.insert(0, str(SCRIPTS))
+    try:
+        module = importlib.import_module("derive_labels")
+    finally:
+        sys.path.remove(str(SCRIPTS))
+    path = tmp_path / "m.nii.gz"
+    nib.save(nib.Nifti1Image(np.full((2, 2, 2), 14.0, dtype=np.float32), np.eye(4)), path)
+    with pytest.raises(ValueError, match="m.nii.gz"):
+        module.locations_present(path)
