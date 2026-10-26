@@ -1,4 +1,4 @@
-"""Train a baseline (prior or gbm) on every fold and write its out-of-fold predictions."""
+"""Train a config and write out-of-fold predictions: prior and gbm on every fold, cnn on one."""
 
 import argparse
 import json
@@ -6,27 +6,50 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
+from monai.transforms import Compose
 
 from neurovision.baselines.b0_prior import predict_prior
 from neurovision.baselines.b1_gbm import predict_gbm
-from neurovision.config import load_config
+from neurovision.config import Config, load_config
+from neurovision.data.augment import build_augment
+from neurovision.data.dataset import CacheDataset, load_index
 from neurovision.data.folds import load_folds
 from neurovision.data.labels import TARGETS, load_labels
 from neurovision.paths import store
 from neurovision.track.meta import run_meta
+from neurovision.train.loop import fit
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("config", type=Path)
-    parser.add_argument("--fold", type=int)
-    args = parser.parse_args(argv)
-    config = load_config(args.config)
-    if config.kind == "cnn":
-        raise SystemExit("kind cnn: not built yet")
-    if args.fold is not None:
-        raise SystemExit(f"kind {config.kind} trains all folds; --fold is not allowed")
+def _train_cnn(config: Config, fold: int) -> None:
+    root = store()
+    folds = load_folds(root)
+    if fold not in set(folds):
+        raise SystemExit(f"fold {fold} is not in folds.csv")
+    labels = load_labels(root, config.labels).loc[folds.index, list(TARGETS)]
+    cache = root / "cache" / "b2-128"
+    index = load_index(cache)
+    ok = set(index.index[index["status"] == "ok"])
 
+    def dataset(frame: pd.DataFrame, transform: Compose | None) -> CacheDataset:
+        frame = frame[frame.index.isin(ok)]
+        return CacheDataset(cache, list(frame.index), frame.to_numpy(), transform)
+
+    train, val = labels[folds != fold], labels[folds == fold]
+    assert config.augment is not None
+    run_dir = root / "runs" / config.name / f"fold{fold}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fit(
+        config,
+        fold,
+        run_dir,
+        dataset(train, build_augment(config.augment)),
+        dataset(val, None),
+        list(val.index),
+        train.to_numpy().mean(axis=0),
+    )
+
+
+def _train_baseline(config: Config) -> None:
     root = store()
     folds = load_folds(root)
     labels = load_labels(root, config.labels).loc[folds.index]
@@ -42,6 +65,22 @@ def main(argv: Sequence[str] | None = None) -> None:
         oof.to_csv(run_dir / "oof.csv")
         (run_dir / "meta.json").write_text(json.dumps(run_meta(config), indent=2))
         print(f"fold {k}: {len(val)} validation series")
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("config", type=Path)
+    parser.add_argument("--fold", type=int)
+    args = parser.parse_args(argv)
+    config = load_config(args.config)
+    if config.kind == "cnn":
+        if args.fold is None:
+            raise SystemExit("kind cnn trains one fold; --fold is required")
+        _train_cnn(config, args.fold)
+    elif args.fold is not None:
+        raise SystemExit(f"kind {config.kind} trains all folds; --fold is not allowed")
+    else:
+        _train_baseline(config)
 
 
 if __name__ == "__main__":
