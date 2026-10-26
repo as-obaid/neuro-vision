@@ -1,0 +1,7 @@
+extends: common.yaml
+kind: cnn
+# Uniform BCE answers the Oct 19 feedback; metric weights are a Stage 2 option.
+train: {epochs: 30, batch_size: 2, accum_steps: 4, lr: 1.0e-4, weight_decay: 1.0e-2,
+        warmup_epochs: 1, ema_decay: 0.999, loss_weights: uniform, num_workers: 8}
+augment: {prob: 0.2, noise_std: 0.1, gamma: [0.7, 1.5], rotate_deg: 10, scale: 0.1,
+          lowres_zoom: [0.5, 1.0]}
