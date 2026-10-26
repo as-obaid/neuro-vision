@@ -1,19 +1,25 @@
 import importlib
 import os
 from collections.abc import Sequence
+from concurrent.futures import Future
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pydicom
 import pytest
+import torch
 
 from neurovision.data.dicom import read_header
 from neurovision.data.preprocess import (
     GeometryError,
+    antialias,
     preprocess_series,
     preprocess_with_geometry,
+    resample,
     series_geometry,
 )
 from tests.dicom_fakes import fake_pixels, write_series
@@ -97,7 +103,7 @@ def test_stripped_multiframe_assumes_standard_orientation(
 ) -> None:
     cube_series(tmp_path / "s", orientation, stripped=True)
     vol, geometry = preprocess_with_geometry(tmp_path / "s")
-    assert geometry.source == "assumed"
+    assert geometry.source == "assumed-orientation"
     centre = np.argwhere(vol > 0).mean(axis=0)
     assert centre[0] < 64 - 10
     assert centre[1] > 64 + 10
@@ -239,6 +245,7 @@ def test_script_records_unexpected_errors_and_continues(
     pd.DataFrame({"SeriesInstanceUID": ["1.2.2", "1.2.1"]}).to_csv(
         root / "raw" / "train.csv", index=False
     )
+    (root / "raw" / ".complete").touch()
     monkeypatch.setenv("NV_STORE", str(root))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
     load_script(monkeypatch).main([])
@@ -266,6 +273,7 @@ def test_script_writes_cache_and_index_and_resumes(
     pd.DataFrame({"SeriesInstanceUID": ["1.2.1", "1.2.2", "1.2.3"], "x": [0, 1, 0]}).to_csv(
         root / "raw" / "train.csv", index=False
     )
+    (root / "raw" / ".complete").touch()
     monkeypatch.setenv("NV_STORE", str(root))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
     script = load_script(monkeypatch)
@@ -290,3 +298,163 @@ def test_script_writes_cache_and_index_and_resumes(
     assert (cache / "1.2.1.npy").stat().st_mtime_ns == first
     assert len(pd.read_csv(cache / "index.csv")) == 4
     assert not list(cache.glob("*.tmp"))
+
+
+def test_spacing_default_is_recorded_separately_from_orientation(tmp_path: Path) -> None:
+    for path in write_series(tmp_path / "s", **KW):
+        ds = pydicom.dcmread(path)
+        del ds.PixelSpacing
+        ds.save_as(path)
+    assert preprocess_with_geometry(tmp_path / "s")[1].source == "assumed-spacing"
+
+
+def test_rejects_frame_count_mismatch(tmp_path: Path) -> None:
+    files = write_series(tmp_path / "s", **KW)
+    ds = pydicom.dcmread(files[5])
+    ds.NumberOfFrames = 2
+    ds.PixelData = ds.PixelData * 2
+    ds.save_as(files[5])
+    with pytest.raises(GeometryError, match="frame count mismatch"):
+        preprocess_series(tmp_path / "s")
+
+
+def test_one_voxel_sheet_survives_a_fourfold_downsample() -> None:
+    volume = np.zeros((512, 16, 16), dtype=np.float32)
+    volume[255] = 1.0  # fourfold along axis 0: plain trilinear samples between voxels and misses it
+    peak = resample(volume).max()
+    assert peak > 0.1
+
+
+def test_antialias_leaves_upsampled_axes_unchanged() -> None:
+    volume = torch.rand(16, 16, 16)
+    assert torch.equal(antialias(volume), volume)
+
+
+def test_antialias_blurs_only_the_downsampled_axis() -> None:
+    volume = torch.rand(512, 16, 16)
+    volume[:] = volume[0]  # constant along axis 0, so blurring that axis changes nothing
+    assert torch.allclose(antialias(volume), volume, atol=1e-6)
+    volume = torch.rand(16, 512, 16)
+    assert not torch.allclose(antialias(volume), volume, atol=1e-3)
+
+
+def make_raw(root: Path, uids: list[str], **kw: object) -> Path:
+    series = root / "raw" / "series"
+    for uid in uids:
+        write_series(series / uid, **{**KW, **kw})
+    pd.DataFrame({"SeriesInstanceUID": uids}).to_csv(root / "raw" / "train.csv", index=False)
+    (root / "raw" / ".complete").touch()
+    return root / "cache" / "b2-128" / "index.csv"
+
+
+def run_script(root: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    monkeypatch.setenv("NV_STORE", str(root))
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "2")
+    script = load_script(monkeypatch)
+    script.main([])
+    return script
+
+
+def test_script_refuses_without_complete_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_raw(tmp_path, ["1.2.1"])
+    (tmp_path / "raw" / ".complete").unlink()
+    monkeypatch.setenv("NV_STORE", str(tmp_path))
+    with pytest.raises(SystemExit, match=r"\.complete"):
+        load_script(monkeypatch).main([])
+    assert not (tmp_path / "cache").exists()
+
+
+def test_resume_retries_error_rows_and_keeps_geometry_exclusions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    index = make_raw(tmp_path, ["1.2.1", "1.2.2"])
+    index.parent.mkdir(parents=True)
+    script = load_script(monkeypatch)
+    rows = [
+        {"SeriesInstanceUID": "1.2.1", "status": "excluded", "reason": "error: OSError"},
+        {"SeriesInstanceUID": "1.2.2", "status": "excluded", "reason": "slice gap"},
+    ]
+    pd.DataFrame(rows, columns=list(script.COLUMNS)).to_csv(index, index=False)
+    run_script(tmp_path, monkeypatch)
+    table = pd.read_csv(index, dtype=str, keep_default_na=False).set_index("SeriesInstanceUID")
+    assert len(table) == 2
+    assert table.loc["1.2.1", "status"] == "ok"
+    assert table.loc["1.2.2", "reason"] == "slice gap"
+    assert (index.parent / "1.2.1.npy").exists()
+    assert not (index.parent / "1.2.2.npy").exists()
+
+
+@pytest.mark.parametrize("content", ["", None], ids=["empty", "header-only"])
+def test_index_gets_exactly_one_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str | None
+) -> None:
+    index = make_raw(tmp_path, ["1.2.1"])
+    index.parent.mkdir(parents=True)
+    script = load_script(monkeypatch)
+    index.write_text("" if content == "" else ",".join(script.COLUMNS) + "\n")
+    run_script(tmp_path, monkeypatch)
+    lines = index.read_text().splitlines()
+    assert sum(line.startswith("SeriesInstanceUID,") for line in lines) == 1
+    assert len(lines) == 2
+
+
+def test_resume_tolerates_a_trailing_partial_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    index = make_raw(tmp_path, ["1.2.1", "1.2.2"])
+    index.parent.mkdir(parents=True)
+    script = load_script(monkeypatch)
+    done = {"SeriesInstanceUID": "1.2.1", "status": "excluded", "reason": "slice gap"}
+    pd.DataFrame([done], columns=list(script.COLUMNS)).to_csv(index, index=False)
+    with index.open("a") as handle:
+        handle.write("1.2.2,ok,,top-lev")
+    run_script(tmp_path, monkeypatch)
+    table = pd.read_csv(index, dtype=str, keep_default_na=False).set_index("SeriesInstanceUID")
+    assert table["status"].to_dict() == {"1.2.1": "excluded", "1.2.2": "ok"}
+    assert table.loc["1.2.2", "size_z"] == "20"
+    assert (index.parent / "1.2.2.npy").exists()
+
+
+class KillingPool:
+    """In-process stand-in for the pool: the first run of the 'killer' series breaks the pool."""
+
+    created = 0
+    killer = "1.2.2"
+    killed = False
+
+    def __init__(self, *_: object) -> None:
+        type(self).created += 1
+
+    def __enter__(self) -> "KillingPool":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def submit(self, fn: Any, uid: str, *rest: object) -> Future[Any]:
+        future: Future[Any] = Future()
+        if uid == self.killer and not type(self).killed:
+            type(self).killed = True
+            future.set_exception(BrokenProcessPool("worker died"))
+        else:
+            future.set_result(fn(uid, *rest))
+        return future
+
+
+def test_dead_worker_marks_series_and_the_run_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    index = make_raw(tmp_path, ["1.2.1", "1.2.2", "1.2.3"])
+    monkeypatch.setenv("NV_STORE", str(tmp_path))
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
+    script = load_script(monkeypatch)
+    monkeypatch.setattr(script, "ProcessPoolExecutor", KillingPool)
+    script.main([])
+    table = pd.read_csv(index, dtype=str, keep_default_na=False).set_index("SeriesInstanceUID")
+    assert table.loc["1.2.2", "reason"] == "error: worker died"
+    assert table.loc["1.2.1", "status"] == "ok"
+    assert table.loc["1.2.3", "status"] == "ok"
+    assert KillingPool.created >= 2
+    assert "ok 2, excluded 1" in capsys.readouterr().out

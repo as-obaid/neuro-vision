@@ -10,11 +10,10 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import pandas as pd
-import pydicom
 from pydicom.multival import MultiValue
 from pydicom.sequence import Sequence as DicomSequence
 
-from neurovision.data.dicom import TEST_TAGS
+from neurovision.data.dicom import TEST_TAGS, read_header
 from neurovision.paths import store
 
 CANDIDATES = ("PatientID", "StudyInstanceUID", "FrameOfReferenceUID", "StudyDate")
@@ -32,10 +31,15 @@ def _text(value: object) -> str:
 
 def scan_series(series_dir: Path) -> dict[str, str]:
     files = sorted(series_dir.glob("*.dcm"))
-    ds = pydicom.dcmread(files[0], specific_tags=[*TEST_TAGS, *EXTRA_TAGS])
     row = {"SeriesInstanceUID": series_dir.name, "n_files": str(len(files))}
-    for tag in (*TEST_TAGS, *EXTRA_TAGS):
-        row[tag] = _text(ds.get(tag, ds.file_meta.get(tag)))
+    row |= {tag: "" for tag in (*TEST_TAGS, *EXTRA_TAGS)}
+    row["error"] = ""
+    try:
+        ds = read_header(files[0], EXTRA_TAGS)
+        for tag in (*TEST_TAGS, *EXTRA_TAGS):
+            row[tag] = _text(ds.get(tag, ds.file_meta.get(tag)))
+    except Exception as error:  # one bad series must not stop the scan
+        row["error"] = type(error).__name__
     return row
 
 
@@ -61,6 +65,8 @@ def summarise(headers: pd.DataFrame, train: pd.DataFrame, tag: str) -> str:
 def main(argv: Sequence[str] | None = None) -> None:
     argparse.ArgumentParser(description=__doc__).parse_args(argv)
     root = store()
+    if not (root / "raw" / ".complete").exists():
+        raise SystemExit("raw/.complete is missing: the unzip has not finished")
     train = pd.read_csv(root / "raw" / "train.csv")
     known = set(train["SeriesInstanceUID"])
     dirs = sorted(d for d in (root / "raw" / "series").iterdir() if d.name in known)
@@ -72,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     headers.to_csv(out, index=False)
     print(f"series scanned {len(headers)} of {len(known)} in train.csv")
+    print(f"series with errors {(headers['error'] != '').sum()}")
     for tag in CANDIDATES:
         print(summarise(headers, train, tag))
 
