@@ -32,8 +32,8 @@ def repo(tmp_path: Path) -> Path:
     (root / "pyproject.toml").write_text("x\n")
     (root / "src" / "a.py").write_text("A = 1\n")
     (root / "notes.md").write_text("n\n")
-    run(["git", "init", "-q"], root)
-    run(["git", "add", "."], root)
+    assert run(["git", "init", "-q"], root).returncode == 0
+    assert run(["git", "add", "."], root).returncode == 0
     assert run([*GIT, "commit", "-qm", "init"], root).returncode == 0
     return root
 
@@ -61,8 +61,8 @@ def sbatch_args(fake_bin: Path) -> str | None:
 def test_clean_tree_submits_with_the_next_window_as_deadline(repo: Path, fake_bin: Path):
     start = time.time() + 30 * 86400
     (repo / "slurm" / "purge_dates").write_text(f"{iso(start)} {iso(start + 86400)}\n")
-    run(["git", "add", "slurm"], repo)
-    run([*GIT, "commit", "-qm", "dates"], repo)
+    assert run(["git", "add", "slurm"], repo).returncode == 0
+    assert run([*GIT, "commit", "-qm", "dates"], repo).returncode == 0
     done = submit(repo, fake_bin, "slurm/job.sbatch", "scripts/x.py", "--flag")
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "4242"
@@ -114,8 +114,8 @@ def test_not_the_repo_root_is_refused(repo: Path, fake_bin: Path):
 
 def test_sbatch_without_a_time_limit_is_refused(repo: Path, fake_bin: Path):
     (repo / "slurm" / "job.sbatch").write_text("#!/bin/bash\n")
-    run(["git", "add", "slurm"], repo)
-    run([*GIT, "commit", "-qm", "no time"], repo)
+    assert run(["git", "add", "slurm"], repo).returncode == 0
+    assert run([*GIT, "commit", "-qm", "no time"], repo).returncode == 0
     done = submit(repo, fake_bin, "slurm/job.sbatch")
     assert done.returncode == 1
     assert "--time" in done.stderr
@@ -124,8 +124,8 @@ def test_sbatch_without_a_time_limit_is_refused(repo: Path, fake_bin: Path):
 def test_purge_window_overlap_is_refused(repo: Path, fake_bin: Path):
     start = time.time() + 600  # the job's 2 h limit reaches it
     (repo / "slurm" / "purge_dates").write_text(f"{iso(start)} {iso(start + 86400)}\n")
-    run(["git", "add", "slurm"], repo)
-    run([*GIT, "commit", "-qm", "dates"], repo)
+    assert run(["git", "add", "slurm"], repo).returncode == 0
+    assert run([*GIT, "commit", "-qm", "dates"], repo).returncode == 0
     done = submit(repo, fake_bin, "slurm/job.sbatch")
     assert done.returncode == 1
     assert "purge window" in done.stderr
@@ -148,7 +148,11 @@ def run_cpu(work: Path, *args: str, env: dict[str, str] | None = None):
 def fake_store(tmp_path: Path) -> Path:
     py = tmp_path / "store" / "envs" / "neuro-vision" / "bin" / "python"
     py.parent.mkdir(parents=True)
-    py.write_text('#!/bin/bash\necho "py $* PYTHONPATH=$PYTHONPATH SECRET=${SECRET:-unset}"\n')
+    py.write_text(
+        "#!/bin/bash\n"
+        'if [ -n "${SECRET:-}" ]; then s=set; else s=unset; fi\n'
+        'echo "py $* PYTHONPATH=$PYTHONPATH SECRET=$s"\n'
+    )
     py.chmod(0o755)
     return tmp_path / "store"
 
@@ -181,7 +185,8 @@ def test_cpu_sources_env_without_printing_it(cpu: Path, tmp_path: Path):
     store = fake_store(tmp_path)
     done = run_cpu(cpu, "scripts/x.py", env={"NV_STORE": str(store)})
     assert done.returncode == 0, done.stderr
-    assert "SECRET=hunter2" in done.stdout  # visible to the child only
+    assert "SECRET=set" in done.stdout  # the child received it
+    assert "hunter2" not in done.stdout
     assert "hunter2" not in done.stderr
 
 
