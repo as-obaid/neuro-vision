@@ -3,6 +3,7 @@
 The list is copied from the competition Data page. TransferSyntaxUID lives in the file meta.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pydicom
@@ -38,8 +39,8 @@ TEST_TAGS: tuple[str, ...] = (
 )
 
 
-def read_header(path: Path) -> Dataset:
-    return pydicom.dcmread(path, specific_tags=list(TEST_TAGS))
+def read_header(path: Path, extra: Sequence[str] = ()) -> Dataset:
+    return pydicom.dcmread(path, specific_tags=[*TEST_TAGS, *extra])
 
 
 def read_series(series_dir: Path) -> list[Dataset]:
