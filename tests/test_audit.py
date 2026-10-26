@@ -106,3 +106,13 @@ def test_verify_fails_on_empty_series(tmp_path, monkeypatch, capsys):
     (store / "raw" / "series" / "s2" / "a.dcm").unlink()
     assert run_audit(load_script(monkeypatch), store, monkeypatch, "--verify") == 1
     assert "empty: 1" in capsys.readouterr().out
+
+
+def test_verify_reports_missing_segmentations_folder(tmp_path, monkeypatch, capsys):
+    store = make_store(tmp_path)
+    (store / "raw" / "segmentations" / "x.nii").unlink()
+    (store / "raw" / "segmentations").rmdir()
+    assert run_audit(load_script(monkeypatch), store, monkeypatch, "--verify") == 0
+    out = capsys.readouterr().out
+    assert "segmentation files: 0" in out
+    assert "warning: raw/segmentations is missing" in out

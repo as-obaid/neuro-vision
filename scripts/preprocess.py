@@ -1,16 +1,19 @@
 """Cache every training series as a 128-cubed volume under $NV_STORE/cache/b2-128.
 
-Resumable: series already in index.csv are skipped. Prints counts and timings only.
+Resumable: series already in index.csv are skipped, except rows whose reason starts with
+"error:" (transient failures), which are retried. Prints counts and timings only.
 """
 
 import argparse
 import csv
 import os
 import time
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Sequence
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
+from typing import TextIO
 
 import numpy as np
 import pandas as pd
@@ -62,27 +65,73 @@ def process(uid: str, series_dir: Path, cache: Path) -> dict[str, object]:
     return row
 
 
+def _load_index(index: Path) -> list[dict[str, str]]:
+    """Rewrite the index as header plus complete, final rows; return the rows kept."""
+    text = index.read_text() if index.exists() else ""
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines.pop()  # a row cut short by a kill
+    kept = [
+        row
+        for row in csv.DictReader(lines)
+        if not row["reason"].startswith("error:") and row["status"] in ("ok", "excluded")
+    ]
+    tmp = index.with_name(index.name + ".tmp")
+    with tmp.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, COLUMNS)
+        writer.writeheader()
+        writer.writerows(kept)
+    os.replace(tmp, index)
+    return kept
+
+
+def _died(uid: str) -> dict[str, object]:
+    return {"SeriesInstanceUID": uid, "status": "excluded", "reason": "error: worker died"}
+
+
+def _run(todo: Sequence[str], root: Path, cache: Path, workers: int, handle: TextIO) -> None:
+    # At most `workers` series in flight, so a dead worker taints few series; they are retried
+    # on the next run.
+    writer = csv.DictWriter(handle, COLUMNS)
+
+    def record(row: dict[str, object]) -> None:
+        writer.writerow(row)
+        handle.flush()
+
+    pending = deque(todo)
+    while pending:
+        inflight: dict[Future[dict[str, object]], str] = {}
+        with ProcessPoolExecutor(workers, None, _one_thread) as pool:
+            try:
+                while pending or inflight:
+                    while pending and len(inflight) < workers:
+                        uid = pending.popleft()
+                        future = pool.submit(process, uid, root / "raw" / "series" / uid, cache)
+                        inflight[future] = uid
+                    finished, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                    for future in finished:
+                        record(future.result())
+                        del inflight[future]
+            except BrokenProcessPool:
+                for future, uid in inflight.items():
+                    broken = not future.done() or future.exception() is not None
+                    record(_died(uid) if broken else future.result())
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     argparse.ArgumentParser(description=__doc__).parse_args(argv)
     root = store()
+    if not (root / "raw" / ".complete").exists():
+        raise SystemExit("raw/.complete is missing: the unzip has not finished")
     cache = root / "cache" / "b2-128"
     cache.mkdir(parents=True, exist_ok=True)
     index = cache / "index.csv"
-    done = set(pd.read_csv(index, dtype=str)["SeriesInstanceUID"]) if index.exists() else set()
+    done = {row["SeriesInstanceUID"] for row in _load_index(index)}
     uids = pd.read_csv(root / "raw" / "train.csv", usecols=["SeriesInstanceUID"], dtype=str)
     todo = [u for u in uids["SeriesInstanceUID"] if u not in done]
     workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
-    with (
-        index.open("a", newline="") as handle,
-        ProcessPoolExecutor(workers, None, _one_thread) as pool,
-    ):
-        writer = csv.DictWriter(handle, COLUMNS)
-        if not done:
-            writer.writeheader()
-        futures = [pool.submit(process, u, root / "raw" / "series" / u, cache) for u in todo]
-        for future in as_completed(futures):
-            writer.writerow(future.result())
-            handle.flush()
+    with index.open("a", newline="") as handle:
+        _run(todo, root, cache, workers, handle)
     table = pd.read_csv(index, dtype={"reason": str}).fillna({"reason": ""})
     reasons = Counter(table.loc[table["status"] == "excluded", "reason"])
     print(f"ok {(table['status'] == 'ok').sum()}, excluded {sum(reasons.values())}")

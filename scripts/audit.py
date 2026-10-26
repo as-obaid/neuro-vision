@@ -5,6 +5,7 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TypedDict
 
 import pandas as pd
 
@@ -20,10 +21,28 @@ def table(header: list[str], rows: list[list[object]]) -> str:
     return "\n".join(lines)
 
 
-def summarise(labels: pd.DataFrame) -> dict[str, object]:
+class AgeSummary(TypedDict):
+    count: int
+    mean: float
+    median: float
+    min: int
+    max: int
+    bands: dict[str, int]
+
+
+class Summary(TypedDict):
+    n_series: int
+    modality: dict[str, int]
+    positives: dict[str, dict[str, int]]
+    age: AgeSummary
+    sex: dict[str, int]
+    missing: dict[str, int]
+
+
+def summarise(labels: pd.DataFrame) -> Summary:
     modalities = sorted(labels["Modality"].dropna().unique())
     age = labels["PatientAge"].dropna()
-    positives = {}
+    positives: dict[str, dict[str, int]] = {}
     for target in TARGETS:
         by_modality = labels.groupby("Modality")[target].sum()
         positives[target] = {m: int(by_modality.get(m, 0)) for m in modalities}
@@ -45,12 +64,9 @@ def summarise(labels: pd.DataFrame) -> dict[str, object]:
     }
 
 
-def print_tables(summary: dict[str, object]) -> None:
-    modality: dict[str, int] = summary["modality"]  # type: ignore[assignment]
-    positives: dict[str, dict[str, int]] = summary["positives"]  # type: ignore[assignment]
-    age: dict[str, object] = summary["age"]  # type: ignore[assignment]
-    sex: dict[str, int] = summary["sex"]  # type: ignore[assignment]
-    missing: dict[str, int] = summary["missing"]  # type: ignore[assignment]
+def print_tables(summary: Summary) -> None:
+    modality, positives, age = summary["modality"], summary["positives"], summary["age"]
+    sex, missing = summary["sex"], summary["missing"]
     print(f"Series: {summary['n_series']}\n")
     print(table(["Modality", "Series"], [[m, n] for m, n in modality.items()]), "\n")
     cols = list(next(iter(positives.values())))
@@ -59,7 +75,7 @@ def print_tables(summary: dict[str, object]) -> None:
         k: (round(v, 1) if isinstance(v, float) else v) for k, v in age.items() if k != "bands"
     }
     print(table(["Age statistic", "Value"], [[k, v] for k, v in stats.items()]), "\n")
-    print(table(["Age band", "Series"], [[b, n] for b, n in age["bands"].items()]), "\n")  # type: ignore[attr-defined]
+    print(table(["Age band", "Series"], [[b, n] for b, n in age["bands"].items()]), "\n")
     print(table(["Sex", "Series"], [[s, n] for s, n in sex.items()]), "\n")
     print(table(["Column", "Missing"], [[c, n] for c, n in missing.items()]))
 
@@ -84,8 +100,12 @@ def verify(root: Path, uids: set[str]) -> int:
         dcm_total += n
     with os.scandir(series) as entries:
         extra = sum(1 for e in entries if e.is_dir() and e.name not in uids)
-    with os.scandir(root / "raw" / "segmentations") as entries:
-        segmentations = sum(1 for e in entries if e.is_file())
+    segmentations = 0
+    if (root / "raw" / "segmentations").is_dir():
+        with os.scandir(root / "raw" / "segmentations") as entries:
+            segmentations = sum(1 for e in entries if e.is_file())
+    else:
+        print("warning: raw/segmentations is missing")
     print(f"present: {present}\nmissing: {missing}\nempty: {empty}\ndcm files: {dcm_total}")
     print(f"single-file series: {single}\nnot in train.csv: {extra}")
     print(f"segmentation files: {segmentations}")

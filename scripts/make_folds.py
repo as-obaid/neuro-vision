@@ -4,6 +4,7 @@ import argparse
 import hashlib
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Final, Literal
 
 import pandas as pd
 import yaml
@@ -14,7 +15,7 @@ from neurovision.paths import store
 
 N_FOLDS = 5
 SEED = 0
-LABEL_SOURCE = "corrected"
+LABEL_SOURCE: Final[Literal["corrected"]] = "corrected"
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -29,11 +30,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     labels = load_labels(root, LABEL_SOURCE)
     groups = None
     if key != "none":
-        column = pd.read_csv(root / "labels" / "headers.csv", index_col="SeriesInstanceUID")[key]
-        column = column.reindex(labels.index)
+        # Read as text: IDs like "00123" or "NA" must survive; an empty cell is missing.
+        headers = pd.read_csv(
+            root / "labels" / "headers.csv",
+            index_col="SeriesInstanceUID",
+            dtype=str,
+            keep_default_na=False,
+        )
+        column = headers[key].reindex(labels.index)
         # A series without a value is its own group.
         own = pd.Series("single:" + labels.index.astype(str), index=labels.index)
-        groups = column.astype("string").fillna(own)
+        groups = column.where(column.notna() & (column != ""), own)
     folds = make_folds(labels, N_FOLDS, SEED, groups)
 
     folds_csv.parent.mkdir(parents=True, exist_ok=True)

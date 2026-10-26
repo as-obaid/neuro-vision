@@ -37,7 +37,9 @@ class Geometry:
     affine: np.ndarray  # voxel (column, row, slice) to patient LPS, mm
     spacing: tuple[float, float, float]  # column, row, slice
     size: tuple[int, int, int]  # columns, rows, slices
-    source: str  # "top-level"; "per-frame" if a tag came from the frame groups; "assumed"
+    # "top-level"; "per-frame" if a tag came from the frame groups; "assumed-orientation" or
+    # "assumed-spacing" (orientation present, spacing defaulted) when a tag was missing everywhere
+    source: str
 
 
 def _frame_value(ds: Dataset, frame: int, sequence: str, tag: str) -> Any:
@@ -108,16 +110,16 @@ def series_geometry(datasets: Sequence[Dataset]) -> Geometry:
         raise GeometryError("mixed size")
     if len(positions) < MIN_SLICES:
         raise GeometryError("too few slices")
-    assumed = False
+    assumed = ""
     if all(o is None for o in orients):
-        orient, assumed = _assume_orientation(np.array(positions)), True
+        orient, assumed = _assume_orientation(np.array(positions)), "assumed-orientation"
     elif any(o is None for o in orients):
         raise GeometryError("missing orientation")
     else:
         orient = _unique([np.array(o, dtype=float) for o in orients], "mixed orientation")
     if all(s is None for s in spacings):
         row_spacing = col_spacing = 1.0  # irrelevant: the whole field of view is resampled
-        assumed = True
+        assumed = assumed or "assumed-spacing"
     elif any(s is None for s in spacings):
         raise GeometryError("missing pixel spacing")
     else:
@@ -143,8 +145,33 @@ def series_geometry(datasets: Sequence[Dataset]) -> Geometry:
         affine=affine,
         spacing=(float(col_spacing), float(row_spacing), float(step)),
         size=(int(cols), int(rows), len(order)),
-        source="assumed" if assumed else "per-frame" if per_frame else "top-level",
+        source=assumed or ("per-frame" if per_frame else "top-level"),
     )
+
+
+def antialias(volume: torch.Tensor) -> torch.Tensor:
+    """Gaussian-blur each axis that the resize to SIZE downsamples (sigma as in scikit-image)."""
+    for axis, n in enumerate(volume.shape):
+        zoom = SIZE / n
+        if zoom >= 1:
+            continue
+        sigma = (1 / zoom - 1) / 2
+        radius = int(np.ceil(4 * sigma))
+        taps = torch.arange(-radius, radius + 1, dtype=volume.dtype)
+        kernel = torch.exp(-(taps**2) / (2 * sigma**2))
+        kernel /= kernel.sum()
+        lines = volume.movedim(axis, -1).reshape(-1, 1, n)
+        padded = functional.pad(lines, (radius, radius), mode="replicate")
+        blurred = functional.conv1d(padded, kernel.view(1, 1, -1))
+        volume = blurred.reshape(*volume.movedim(axis, -1).shape).movedim(-1, axis)
+    return volume
+
+
+def resample(volume: np.ndarray) -> np.ndarray:
+    blurred = antialias(torch.from_numpy(volume))
+    return functional.interpolate(
+        blurred[None, None], size=(SIZE, SIZE, SIZE), mode="trilinear", align_corners=False
+    )[0, 0].numpy()
 
 
 def _slices(ds: Dataset) -> np.ndarray:
@@ -162,7 +189,10 @@ def _slices(ds: Dataset) -> np.ndarray:
 def preprocess_with_geometry(series_dir: Path) -> tuple[np.ndarray, Geometry]:
     datasets = read_series(series_dir)
     geometry = series_geometry(datasets)
-    stack = np.concatenate([_slices(ds) for ds in datasets])[list(geometry.order)]
+    stack = np.concatenate([_slices(ds) for ds in datasets])
+    if len(stack) != len(geometry.order):
+        raise GeometryError("frame count mismatch")
+    stack = stack[list(geometry.order)]
     if not np.isfinite(stack).all():
         raise GeometryError("non-finite pixels")
     # DICOM is LPS; flip x and y to RAS, then permute and flip the axes to RAS+ order.
@@ -170,12 +200,7 @@ def preprocess_with_geometry(series_dir: Path) -> tuple[np.ndarray, Geometry]:
     ras = orientations.apply_orientation(
         stack.transpose(2, 1, 0), orientations.io_orientation(affine)
     )
-    resampled = functional.interpolate(
-        torch.from_numpy(np.ascontiguousarray(ras))[None, None],
-        size=(SIZE, SIZE, SIZE),
-        mode="trilinear",
-        align_corners=False,
-    )[0, 0].numpy()
+    resampled = resample(np.ascontiguousarray(ras))
     low, high = np.percentile(resampled, [0.5, 99.5])
     clipped = np.clip(resampled, low, high)
     z = (clipped - clipped.mean()) / max(float(clipped.std()), 1e-6)

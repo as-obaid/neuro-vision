@@ -1,8 +1,10 @@
 """Stratified (and optionally grouped) cross-validation folds."""
 
+import hashlib
 from pathlib import Path
 
 import pandas as pd
+import yaml
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
 from neurovision.data.labels import ANEURYSM_PRESENT
@@ -24,5 +26,11 @@ def make_folds(
 
 
 def load_folds(store: Path) -> pd.Series:
-    frame = pd.read_csv(store / "folds" / "folds.csv", index_col="SeriesInstanceUID")
-    return frame["fold"]
+    folds_csv = store / "folds" / "folds.csv"
+    manifest = store / "folds" / "folds.yaml"
+    if not manifest.exists():
+        raise ValueError(f"{manifest} is missing; cannot verify folds.csv")
+    expected = yaml.safe_load(manifest.read_text())["folds_sha256"]
+    if hashlib.sha256(folds_csv.read_bytes()).hexdigest() != expected:
+        raise ValueError(f"{folds_csv} does not match the sha256 in folds.yaml")
+    return pd.read_csv(folds_csv, index_col="SeriesInstanceUID")["fold"]

@@ -9,13 +9,13 @@ from tests.label_fakes import fake_labels
 GBM = GbmConfig(max_iter=20, learning_rate=0.1, max_depth=2)
 
 
-def test_prior_is_training_mean_for_every_validation_row() -> None:
+def test_prior_is_overall_prevalence_whatever_the_split() -> None:
     labels = fake_labels()
-    train, val = labels.iloc[:150], labels.iloc[150:]
-    prob = predict_prior(train, val)
-    assert prob.shape == (50, 14)
-    expected = train[list(TARGETS)].mean().to_numpy()
-    np.testing.assert_allclose(prob, np.tile(expected, (50, 1)))
+    expected = labels[list(TARGETS)].mean().to_numpy()
+    for cut in (150, 60):
+        prob = predict_prior(labels.iloc[:cut], labels.iloc[cut:])
+        assert prob.shape == (200 - cut, 14)
+        np.testing.assert_allclose(prob, np.tile(expected, (200 - cut, 1)))
 
 
 def test_gbm_output_shape_and_range() -> None:
