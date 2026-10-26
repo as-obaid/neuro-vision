@@ -314,7 +314,10 @@ def test_rejects_frame_count_mismatch(tmp_path: Path) -> None:
     ds.NumberOfFrames = 2
     ds.PixelData = ds.PixelData * 2
     ds.save_as(files[5])
-    with pytest.raises(GeometryError, match="frame count mismatch"):
+    with (
+        pytest.warns(UserWarning, match="sufficient to contain 2 frames"),
+        pytest.raises(GeometryError, match="frame count mismatch"),
+    ):
         preprocess_series(tmp_path / "s")
 
 

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from torch import nn
 
@@ -34,10 +35,18 @@ def test_broken_geometry_gives_the_prior(tmp_path: Path) -> None:
         top_level_geometry=False,
         frame_orientation=False,
     )
-    np.testing.assert_array_equal(predict_series(tmp_path / "s", _model(), PRIOR), PRIOR)
+    np.testing.assert_allclose(predict_series(tmp_path / "s", _model(), PRIOR), PRIOR, rtol=1e-6)
 
 
-def test_corrupt_file_gives_the_prior(tmp_path: Path) -> None:
+def test_corrupt_file_gives_a_float32_prior_copy_and_one_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     (tmp_path / "s").mkdir()
     (tmp_path / "s" / "0.dcm").write_bytes(b"not a dicom file")
-    np.testing.assert_array_equal(predict_series(tmp_path / "s", _model(), PRIOR), PRIOR)
+    probs = predict_series(tmp_path / "s", _model(), PRIOR)
+    assert probs.dtype == np.float32
+    np.testing.assert_allclose(probs, PRIOR, rtol=1e-6)
+    assert probs is not PRIOR
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    assert "InvalidDicomError" in caplog.text
+    assert str(tmp_path) not in caplog.text

@@ -1,15 +1,17 @@
+import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
+import wandb
 from monai.transforms import Randomizable
 
 from neurovision.config import load_config
 from neurovision.data.labels import TARGETS
 from neurovision.train import loop
-from neurovision.train.loop import fit, train_loader
+from neurovision.train.loop import fit, train_loader, val_loader
 from tests.cnn_fakes import fold0_datasets, write_config, write_store
 
 PRIOR = np.full(14, 0.3)
@@ -83,6 +85,8 @@ def test_resume_reaches_the_same_weights(tmp_path: Path, monkeypatch: pytest.Mon
     assert a["epoch"] == b["epoch"] == 1
     for key, value in a["model"].items():
         torch.testing.assert_close(b["model"][key], value, atol=1e-6, rtol=0)
+    for key, value in a["ema"].items():
+        torch.testing.assert_close(b["ema"][key], value, atol=1e-6, rtol=0)
     history = pd.read_csv(tmp_path / "resumed" / "history.csv")
     assert list(history["epoch"]) == [0, 1]
 
@@ -107,8 +111,68 @@ def test_run_directory_contents(tmp_path: Path) -> None:
     assert any(k.endswith("running_mean") for k in best)
 
 
-def test_finished_run_adds_no_epochs(tmp_path: Path) -> None:
+def test_finished_run_changes_nothing(tmp_path: Path) -> None:
     run = _fit(tmp_path, "run")
-    before = (run / "history.csv").read_text()
+    names = ["history.csv", "oof.csv", "best.pt", "meta.json"]
+    before = {n: (run / n).read_bytes() for n in names}
     _fit_again(tmp_path, "run")
-    assert (run / "history.csv").read_text() == before
+    assert {n: (run / n).read_bytes() for n in names} == before
+
+
+def _interrupt_in_epoch_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    real = loop.train_one_epoch
+
+    def stop(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "train_one_epoch", stop)
+
+
+def test_resumed_meta_keeps_stored_peak_and_all_epoch_times(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _interrupt_in_epoch_two(monkeypatch)
+    with pytest.raises(KeyboardInterrupt):
+        _fit(tmp_path, "run")
+    monkeypatch.undo()
+    monkeypatch.setenv("WANDB_PROJECT", "test-project")
+    monkeypatch.setenv("WANDB_SILENT", "true")
+    (tmp_path / "run" / "meta.json").write_text('{"peak_gpu_memory_mib": 999.0}')
+    _fit_again(tmp_path, "run")
+    meta = json.loads((tmp_path / "run" / "meta.json").read_text())
+    history = pd.read_csv(tmp_path / "run" / "history.csv")
+    assert meta["peak_gpu_memory_mib"] == 999.0
+    assert meta["train_seconds_per_epoch"] == pytest.approx(history["train_seconds"].mean())
+    assert meta["val_seconds_per_epoch"] == pytest.approx(history["val_seconds"].mean())
+
+
+def test_failed_best_write_leaves_no_best_and_finishes_wandb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = torch.save
+
+    def torn_save(obj, path):
+        real(obj, path)
+        if str(path).endswith("best.pt.tmp"):
+            raise RuntimeError("disk full")
+
+    monkeypatch.setattr(torch, "save", torn_save)
+    with pytest.raises(RuntimeError, match="disk full"):
+        _fit(tmp_path, "run")
+    assert not (tmp_path / "run" / "best.pt").exists()
+    assert wandb.run is None
+
+
+@pytest.mark.parametrize(("workers", "persistent"), [(0, False), (2, True)])
+def test_validation_loader_keeps_workers_alive(
+    tmp_path: Path, workers: int, persistent: bool
+) -> None:
+    write_store(tmp_path)
+    _, val_ds, _ = fold0_datasets(tmp_path)
+    cfg = load_config(write_config(tmp_path / "b2.yaml", num_workers=workers)).train
+    assert cfg is not None
+    assert val_loader(val_ds, cfg, False).persistent_workers is persistent

@@ -98,6 +98,12 @@ def evaluate(
     return p, loss
 
 
+def atomic_save(path: Path, obj: object) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(obj, tmp)
+    os.replace(tmp, path)
+
+
 def save_checkpoint(
     path: Path,
     model: nn.Module,
@@ -108,8 +114,8 @@ def save_checkpoint(
     best_score: float,
 ) -> None:
     """`epoch` is the last completed epoch."""
-    tmp = path.with_name(path.name + ".tmp")
-    torch.save(
+    atomic_save(
+        path,
         {
             "model": model.state_dict(),
             "ema": ema.state_dict(),
@@ -118,9 +124,7 @@ def save_checkpoint(
             "epoch": epoch,
             "best_score": best_score,
         },
-        tmp,
     )
-    os.replace(tmp, path)
 
 
 def load_checkpoint(
@@ -155,6 +159,16 @@ def train_loader(
     )
 
 
+def val_loader(ds: CacheDataset, cfg: TrainConfig, pin_memory: bool) -> DataLoader:
+    return DataLoader(
+        ds,
+        batch_size=cfg.batch_size,
+        num_workers=cfg.num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=cfg.num_workers > 0,
+    )
+
+
 def fit(
     config: Config,
     fold: int,
@@ -177,57 +191,74 @@ def fit(
         optimizer, cfg.warmup_epochs * steps_per_epoch, cfg.epochs * steps_per_epoch
     )
     ema = make_ema(model, cfg.ema_decay)
-    val_loader = DataLoader(
-        val_ds, batch_size=cfg.batch_size, num_workers=cfg.num_workers, pin_memory=pin
-    )
+    valid = val_loader(val_ds, cfg, pin)
 
     first_epoch, best_score = 0, -math.inf
     history_path = run_dir / "history.csv"
-    history = pd.DataFrame(columns=HISTORY_COLUMNS)
+    rows: list[dict[str, float]] = []
     if (run_dir / "last.pt").exists():
         first_epoch, best_score = load_checkpoint(
             run_dir / "last.pt", model, ema, optimizer, scheduler
         )
+        if first_epoch >= cfg.epochs:
+            return
         # a crash after the history write but before last.pt would otherwise repeat an epoch
-        history = pd.read_csv(history_path).query("epoch < @first_epoch")
+        history = pd.read_csv(history_path)
+        rows = history[history["epoch"] < first_epoch].to_dict("records")
 
     run = log.start(config, fold, run_dir)
-    y_true = val_ds.targets
-    for epoch in range(first_epoch, cfg.epochs):
-        t0 = time.perf_counter()
-        train_loss = train_one_epoch(
-            model,
-            train_loader(train_ds, cfg, config.seed, epoch, pin),
-            optimizer,
-            scheduler,
-            ema,
-            cfg.accum_steps,
-            device,
-        )
-        t1 = time.perf_counter()
-        probs, val_loss = evaluate(ema, val_loader, device)
-        val_score = score(y_true, probs)
-        t2 = time.perf_counter()
-        row = {
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "val_score": val_score,
-            "lr": optimizer.param_groups[0]["lr"],
-            "train_seconds": t1 - t0,
-            "val_seconds": t2 - t1,
-        }
-        history = pd.concat([history, pd.DataFrame([row])], ignore_index=True)
-        history.to_csv(history_path, index=False)
-        run.log({k: v for k, v in row.items() if k != "epoch"}, step=epoch)
-        if val_score > best_score:
-            best_score = val_score
-            torch.save(ema.module.state_dict(), run_dir / "best.pt")
-        save_checkpoint(run_dir / "last.pt", model, ema, optimizer, scheduler, epoch, best_score)
+    try:
+        for epoch in range(first_epoch, cfg.epochs):
+            t0 = time.perf_counter()
+            train_loss = train_one_epoch(
+                model,
+                train_loader(train_ds, cfg, config.seed, epoch, pin),
+                optimizer,
+                scheduler,
+                ema,
+                cfg.accum_steps,
+                device,
+            )
+            t1 = time.perf_counter()
+            probs, val_loss = evaluate(ema, valid, device)
+            val_score = score(val_ds.targets, probs)
+            t2 = time.perf_counter()
+            row = {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "val_score": val_score,
+                "lr": optimizer.param_groups[0]["lr"],
+                "train_seconds": t1 - t0,
+                "val_seconds": t2 - t1,
+            }
+            rows.append(row)
+            pd.DataFrame(rows, columns=HISTORY_COLUMNS).to_csv(history_path, index=False)
+            run.log({k: v for k, v in row.items() if k != "epoch"}, step=epoch)
+            if val_score > best_score:
+                best_score = val_score
+                atomic_save(run_dir / "best.pt", ema.module.state_dict())
+            save_checkpoint(
+                run_dir / "last.pt", model, ema, optimizer, scheduler, epoch, best_score
+            )
+        _write_outputs(config, run_dir, val_ds, val_uids, prior, valid, rows, device)
+    finally:
+        run.finish({"best_val_score": best_score})
 
+
+def _write_outputs(
+    config: Config,
+    run_dir: Path,
+    val_ds: CacheDataset,
+    val_uids: list[str],
+    prior: np.ndarray,
+    valid: DataLoader,
+    rows: list[dict[str, float]],
+    device: torch.device,
+) -> None:
     best = build_model()
     best.load_state_dict(torch.load(run_dir / "best.pt", map_location="cpu", weights_only=True))
-    probs, _ = evaluate(best, val_loader, device)
+    probs, _ = evaluate(best, valid, device)
     oof = pd.DataFrame(
         np.tile(prior, (len(val_uids), 1)),
         index=pd.Index(val_uids, name="SeriesInstanceUID"),
@@ -236,10 +267,15 @@ def fit(
     oof.loc[val_ds.uids] = probs
     oof.to_csv(run_dir / "oof.csv")
 
+    # a resumed run only saw its own epochs' memory; the earlier peak is in the old meta.json
+    peaks = [torch.cuda.max_memory_allocated() / 2**20] if device.type == "cuda" else []
+    meta_path = run_dir / "meta.json"
+    if meta_path.exists():
+        stored = json.loads(meta_path.read_text()).get("peak_gpu_memory_mib")
+        peaks += [stored] if stored is not None else []
     meta = run_meta(config) | {
-        "train_seconds_per_epoch": float(history["train_seconds"].mean()),
-        "val_seconds_per_epoch": float(history["val_seconds"].mean()),
-        "peak_gpu_memory_mib": torch.cuda.max_memory_allocated() / 2**20 if pin else None,
+        "train_seconds_per_epoch": float(np.mean([r["train_seconds"] for r in rows])),
+        "val_seconds_per_epoch": float(np.mean([r["val_seconds"] for r in rows])),
+        "peak_gpu_memory_mib": max(peaks) if peaks else None,
     }
-    (run_dir / "meta.json").write_text(json.dumps(meta, indent=2))
-    run.finish({"best_val_score": best_score})
+    meta_path.write_text(json.dumps(meta, indent=2))
