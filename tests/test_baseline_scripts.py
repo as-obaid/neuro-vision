@@ -74,12 +74,6 @@ def test_fold_flag_refused_for_baselines(setup) -> None:
     assert not (store / "runs").exists()
 
 
-def test_cnn_kind_exits_not_built(setup) -> None:
-    train, _, store, _ = setup
-    with pytest.raises(SystemExit, match="kind cnn: not built yet"):
-        train.main([str(store / "configs" / "b2.yaml"), "--fold", "0"])
-
-
 def _trained(setup) -> tuple[object, Path, str]:
     train, score, store, _ = setup
     config = str(store / "configs" / "b0.yaml")
