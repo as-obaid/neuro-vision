@@ -1,5 +1,6 @@
 """Synthetic store with a 32-cube cache for the B2 training tests."""
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,8 @@ def write_store(root: Path) -> None:
     """
     (root / "folds").mkdir(parents=True)
     FOLDS.rename("fold").to_csv(root / "folds" / "folds.csv")
+    sha = hashlib.sha256((root / "folds" / "folds.csv").read_bytes()).hexdigest()
+    (root / "folds" / "folds.yaml").write_text(f"folds_sha256: {sha}\n")
     cache = root / "cache" / "b2-128"
     cache.mkdir(parents=True)
     rng = np.random.default_rng(0)
