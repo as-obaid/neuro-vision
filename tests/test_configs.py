@@ -142,6 +142,7 @@ def test_non_positive_value_raises(tmp_path: Path) -> None:
         ("train", "ema_decay", 1.5),
         ("train", "num_workers", -1),
         ("train", "early_stop_patience", 0),
+        ("train", "loss_weights", "metric"),
         ("augment", "prob", -0.1),
         ("augment", "prob", 1.1),
         ("augment", "noise_std", -0.1),

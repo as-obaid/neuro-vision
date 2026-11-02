@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from neurovision.train.ema import make_ema
-from neurovision.train.losses import bce
+from neurovision.train.losses import bce, label_weights
 from neurovision.train.schedule import cosine_with_warmup
 
 
@@ -15,6 +15,19 @@ def test_bce_matches_torch_mean_bce_with_logits() -> None:
     logits = torch.randn(4, 14, generator=g)
     targets = torch.randint(0, 2, (4, 14), generator=g).float()
     assert torch.allclose(bce(logits, targets), F.binary_cross_entropy_with_logits(logits, targets))
+    assert torch.allclose(
+        bce(logits, targets, label_weights("uniform")),
+        F.binary_cross_entropy_with_logits(logits, targets),
+    )
+
+
+def test_competition_weights_give_aneurysm_present_half_the_loss() -> None:
+    g = torch.Generator().manual_seed(0)
+    logits = torch.randn(4, 14, generator=g)
+    targets = torch.randint(0, 2, (4, 14), generator=g).float()
+    per_label = F.binary_cross_entropy_with_logits(logits, targets, reduction="none").mean(0)
+    expected = 0.5 * per_label[13] + 0.5 * per_label[:13].mean()
+    assert torch.allclose(bce(logits, targets, label_weights("competition")), expected)
 
 
 def test_ema_follows_closed_form_after_three_updates() -> None:

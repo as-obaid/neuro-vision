@@ -28,7 +28,7 @@ from neurovision.paths import atomic_write
 from neurovision.track import log
 from neurovision.track.meta import run_meta
 from neurovision.train.ema import make_ema
-from neurovision.train.losses import bce
+from neurovision.train.losses import bce, label_weights, weighted_mean
 from neurovision.train.schedule import cosine_with_warmup
 
 HISTORY_COLUMNS = [
@@ -50,8 +50,10 @@ def train_one_epoch(
     ema: AveragedModel,
     accum_steps: int,
     device: torch.device,
+    weights: torch.Tensor | None = None,
 ) -> float:
     model.train()
+    weights = None if weights is None else weights.to(device)
     optimizer.zero_grad(set_to_none=True)
     total = torch.zeros((), device=device)
     n = 0
@@ -65,7 +67,7 @@ def train_one_epoch(
     for x, y in loader:
         with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
             logits = model(x.to(device))
-        loss = bce(logits.float(), y.to(device))
+        loss = bce(logits.float(), y.to(device), weights)
         (loss / accum_steps).backward()
         total += loss.detach()
         n += 1
@@ -83,7 +85,10 @@ def train_one_epoch(
 
 
 def evaluate(
-    model: nn.Module, loader: Iterable[tuple[torch.Tensor, torch.Tensor]], device: torch.device
+    model: nn.Module,
+    loader: Iterable[tuple[torch.Tensor, torch.Tensor]],
+    device: torch.device,
+    weights: torch.Tensor | None = None,
 ) -> tuple[np.ndarray, float]:
     model.to(device)
     probs, targets = [], []
@@ -93,7 +98,8 @@ def evaluate(
     if not probs:
         raise ValueError("empty loader")
     p = np.concatenate(probs)
-    loss = F.binary_cross_entropy(torch.from_numpy(p), torch.cat(targets)).item()
+    losses = F.binary_cross_entropy(torch.from_numpy(p), torch.cat(targets), reduction="none")
+    loss = weighted_mean(losses, None if weights is None else weights.cpu()).item()
     return p, loss
 
 
@@ -199,6 +205,7 @@ def fit(
     )
     ema = make_ema(model, cfg.ema_decay)
     valid = val_loader(val_ds, cfg, pin)
+    weights = label_weights(cfg.loss_weights)
 
     first_epoch, best_score, peak, rows = _resume(run_dir, model, ema, optimizer, scheduler)
     history_path = run_dir / "history.csv"
@@ -216,9 +223,10 @@ def fit(
                 ema,
                 cfg.accum_steps,
                 device,
+                weights,
             )
             t1 = time.perf_counter()
-            probs, val_loss = evaluate(ema, valid, device)
+            probs, val_loss = evaluate(ema, valid, device, weights)
             val_score = score(val_ds.targets, probs)
             t2 = time.perf_counter()
             row = {

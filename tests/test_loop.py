@@ -13,6 +13,7 @@ from neurovision.infer.predict import predict_volumes
 from neurovision.models.resnet3d import build_model
 from neurovision.train.ema import make_ema
 from neurovision.train.loop import evaluate, load_checkpoint, save_checkpoint, train_one_epoch
+from neurovision.train.losses import label_weights
 from neurovision.train.schedule import cosine_with_warmup
 
 CPU = torch.device("cpu")
@@ -110,6 +111,18 @@ def test_evaluate_returns_probabilities_and_bce() -> None:
     probs, loss = evaluate(model, DataLoader(TensorDataset(x, y), batch_size=2), CPU)
     assert probs.shape == (5, 14)
     expected = nn.functional.binary_cross_entropy(torch.from_numpy(probs), y).item()
+    assert loss == pytest.approx(expected, rel=1e-4)
+
+
+def test_evaluate_weights_the_loss_like_training() -> None:
+    model = nn.Sequential(nn.Flatten(), nn.Linear(8**3, 14))
+    x, y = _data(5, size=8)
+    weights = label_weights("competition")
+    probs, loss = evaluate(model, DataLoader(TensorDataset(x, y), batch_size=2), CPU, weights)
+    per_label = nn.functional.binary_cross_entropy(
+        torch.from_numpy(probs), y, reduction="none"
+    ).mean(0)
+    expected = ((per_label * weights).sum() / weights.sum()).item()
     assert loss == pytest.approx(expected, rel=1e-4)
 
 

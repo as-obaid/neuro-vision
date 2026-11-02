@@ -25,7 +25,7 @@ class TrainConfig(_Frozen):
     weight_decay: float = Field(ge=0)
     warmup_epochs: int = Field(ge=0)
     ema_decay: float = Field(gt=0, lt=1)
-    loss_weights: Literal["uniform"]
+    loss_weights: Literal["uniform", "competition"]
     num_workers: int = Field(ge=0)
     # stop once validation loss has not improved for this many epochs; None trains every epoch
     early_stop_patience: PositiveInt | None = None

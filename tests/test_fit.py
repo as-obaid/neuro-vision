@@ -13,6 +13,7 @@ from neurovision.config import load_config
 from neurovision.data.labels import TARGETS
 from neurovision.train import loop
 from neurovision.train.loop import fit, stalled, train_loader, val_loader
+from neurovision.train.losses import label_weights
 from tests.cnn_fakes import fold0_datasets, write_config, write_store
 
 PRIOR = np.full(14, 0.3)
@@ -32,11 +33,20 @@ def wandb_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WANDB_SILENT", "true")
 
 
-def _fit(tmp_path: Path, run: str, epochs: int = 2, early_stop_patience: int | None = None) -> Path:
+def _fit(
+    tmp_path: Path,
+    run: str,
+    epochs: int = 2,
+    early_stop_patience: int | None = None,
+    loss_weights: str = "uniform",
+) -> Path:
     if not (tmp_path / "store").exists():
         write_store(tmp_path / "store")
     path = write_config(
-        tmp_path / "b2.yaml", epochs=epochs, early_stop_patience=early_stop_patience
+        tmp_path / "b2.yaml",
+        epochs=epochs,
+        early_stop_patience=early_stop_patience,
+        loss_weights=loss_weights,
     )
     config = load_config(path)
     train_ds, val_ds, val_uids = fold0_datasets(tmp_path / "store")
@@ -330,3 +340,25 @@ def test_resume_after_early_stop_trains_no_more(
     _fit_again(tmp_path, "run")
     assert len(pd.read_csv(tmp_path / "run" / "history.csv")) == 2
     assert (tmp_path / "run" / "meta.json").exists()
+
+
+def test_fit_trains_and_validates_with_the_configured_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = []
+    real_bce, real_evaluate = loop.bce, loop.evaluate
+
+    def spy_bce(logits, targets, weights=None):
+        seen.append(("train", weights))
+        return real_bce(logits, targets, weights)
+
+    def spy_evaluate(model, loader, device, weights=None):
+        seen.append(("val", weights))
+        return real_evaluate(model, loader, device, weights)
+
+    monkeypatch.setattr(loop, "bce", spy_bce)
+    monkeypatch.setattr(loop, "evaluate", spy_evaluate)
+    _fit(tmp_path, "run", epochs=2, loss_weights="competition")
+    expected = label_weights("competition")
+    stages = {stage for stage, w in seen if w is not None and torch.equal(w.cpu(), expected)}
+    assert stages == {"train", "val"}
