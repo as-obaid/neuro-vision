@@ -132,6 +132,41 @@ def test_purge_window_overlap_is_refused(repo: Path, fake_bin: Path):
     assert sbatch_args(fake_bin) is None
 
 
+def test_begin_after_a_window_is_checked_from_the_begin_time(repo: Path, fake_bin: Path):
+    start = time.time() + 600  # from now, the job's 2 h limit would reach it
+    end = start + 86400
+    (repo / "slurm" / "purge_dates").write_text(f"{iso(start)} {iso(end)}\n")
+    assert run(["git", "add", "slurm"], repo).returncode == 0
+    assert run([*GIT, "commit", "-qm", "dates"], repo).returncode == 0
+    begin = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(int(end) + 60))
+    env = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "TZ": "UTC", "SUBMIT_BEGIN": begin}
+    done = run(["bash", str(repo / "slurm" / "submit.sh"), "slurm/job.sbatch", "a"], repo, env)
+    assert done.returncode == 0, done.stderr
+    assert sbatch_args(fake_bin) == f"--parsable --begin={begin} slurm/job.sbatch a"
+
+
+def test_begin_inside_a_window_is_refused(repo: Path, fake_bin: Path):
+    start = time.time() + 600
+    (repo / "slurm" / "purge_dates").write_text(f"{iso(start)} {iso(start + 86400)}\n")
+    assert run(["git", "add", "slurm"], repo).returncode == 0
+    assert run([*GIT, "commit", "-qm", "dates"], repo).returncode == 0
+    begin = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(int(start) + 3600))
+    env = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "TZ": "UTC", "SUBMIT_BEGIN": begin}
+    done = run(["bash", str(repo / "slurm" / "submit.sh"), "slurm/job.sbatch"], repo, env)
+    assert done.returncode == 1
+    assert "purge window" in done.stderr
+    assert sbatch_args(fake_bin) is None
+
+
+@pytest.mark.parametrize("begin", ["tomorrow", "2026-11-04 00:05", "2026-11-04T00:05:00;x"])
+def test_bad_begin_is_refused(repo: Path, fake_bin: Path, begin: str):
+    env = {"PATH": f"{fake_bin}:{os.environ['PATH']}", "TZ": "UTC", "SUBMIT_BEGIN": begin}
+    done = run(["bash", str(repo / "slurm" / "submit.sh"), "slurm/job.sbatch"], repo, env)
+    assert done.returncode == 1
+    assert "SUBMIT_BEGIN" in done.stderr
+    assert sbatch_args(fake_bin) is None
+
+
 @pytest.fixture
 def cpu(tmp_path: Path) -> Path:
     work = tmp_path / "work"

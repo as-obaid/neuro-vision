@@ -2,7 +2,8 @@
 # Submit a job: bash slurm/submit.sh slurm/NAME.sbatch [ARGS...]   (from the repo root)
 # Refuses a dirty tree and a job whose time limit reaches a /scratch purge window
 # (slurm/purge_dates). Passes --deadline = the next window's start, so a job that waits in the
-# queue cannot start into a window either.
+# queue cannot start into a window either. SUBMIT_BEGIN=YYYY-MM-DDTHH:MM:SS (local time) holds the
+# job until then (sbatch --begin); the window check then runs from that time.
 set -euo pipefail
 
 refuse() {
@@ -29,11 +30,21 @@ $dirty"
 limit=$(sed -n 's/^#SBATCH --time=\([^[:space:]]*\).*/\1/p' "$batch" | head -n 1)
 [ -n "$limit" ] || refuse "$batch has no '#SBATCH --time=' line"
 
-deadline=$(python3 slurm/purge_check.py --now "$(date +%s)" --limit "$limit") || exit 1
+now=$(date +%s)
+begin=()
+if [ -n "${SUBMIT_BEGIN:-}" ]; then
+  [[ $SUBMIT_BEGIN =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] ||
+    refuse "SUBMIT_BEGIN '$SUBMIT_BEGIN' is not YYYY-MM-DDTHH:MM:SS"
+  at=$(python3 -c 'import sys, datetime; print(int(datetime.datetime.fromisoformat(sys.argv[1]).timestamp()))' "$SUBMIT_BEGIN") ||
+    refuse "SUBMIT_BEGIN '$SUBMIT_BEGIN' is not a valid time"
+  [ "$at" -gt "$now" ] && now=$at
+  begin=("--begin=$SUBMIT_BEGIN")
+fi
+deadline=$(python3 slurm/purge_check.py --now "$now" --limit "$limit") || exit 1
 
 mkdir -p slurm/logs
 if [ -n "$deadline" ]; then
-  sbatch --parsable "--deadline=$deadline" "$batch" "$@"
+  sbatch --parsable ${begin[@]+"${begin[@]}"} "--deadline=$deadline" "$batch" "$@"
 else
-  sbatch --parsable "$batch" "$@"
+  sbatch --parsable ${begin[@]+"${begin[@]}"} "$batch" "$@"
 fi

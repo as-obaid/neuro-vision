@@ -349,6 +349,18 @@ def test_batch16_push_changes_only_batch_accumulation_and_rate() -> None:
     assert (cfg.train.batch_size, cfg.train.accum_steps, cfg.train.lr) == (16, 1, 1.2e-3)
 
 
+def test_final_config_restores_the_base_schedule_on_the_best_tune_run() -> None:
+    diff = changed_leaves(
+        resolve(CONFIGS / "final" / "b2_final.yaml"),
+        resolve(CONFIGS / "tune" / "t_flip_b4_r3d18_mm160_aug0.1_lr6e-4.yaml"),
+    )
+    assert diff == {"train.epochs", "train.early_stop_patience"}
+    final = load_config(CONFIGS / "final" / "b2_final.yaml").train
+    base = load_config(CONFIGS / "base" / "b2.yaml").train
+    assert final is not None and base is not None
+    assert (final.epochs, final.early_stop_patience) == (base.epochs, base.early_stop_patience)
+
+
 def test_init_must_fit_the_backbone() -> None:
     for backbone, init in [("r3d18", "imagenet"), ("resnet18", "kinetics")]:
         train = {**TRAIN, "backbone": backbone, "init": init}
