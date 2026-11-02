@@ -1,12 +1,13 @@
 import math
 
+import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 from neurovision.train.ema import make_ema
-from neurovision.train.losses import bce, label_weights
+from neurovision.train.losses import bce, label_weights, positive_weights
 from neurovision.train.schedule import cosine_with_warmup
 
 
@@ -28,6 +29,32 @@ def test_competition_weights_give_aneurysm_present_half_the_loss() -> None:
     per_label = F.binary_cross_entropy_with_logits(logits, targets, reduction="none").mean(0)
     expected = 0.5 * per_label[13] + 0.5 * per_label[:13].mean()
     assert torch.allclose(bce(logits, targets, label_weights("competition")), expected)
+
+
+def test_sqrt_positive_weights_from_training_counts() -> None:
+    targets = np.zeros((10, 14))
+    targets[:2, :13] = 1  # 2 positives, 8 negatives per location
+    targets[:5, 13] = 1  # Aneurysm Present 5 of 10
+    weights = positive_weights(targets, "sqrt")
+    assert weights is not None
+    torch.testing.assert_close(weights, torch.tensor([2.0] * 13 + [1.0]))
+    assert positive_weights(targets, None) is None
+
+
+def test_positive_weights_refuse_a_label_without_positives() -> None:
+    targets = np.ones((4, 14))
+    targets[:, 3] = 0
+    with pytest.raises(ValueError, match="no positive"):
+        positive_weights(targets, "sqrt")
+
+
+def test_bce_scales_positive_terms_by_pos_weight() -> None:
+    g = torch.Generator().manual_seed(0)
+    logits = torch.randn(4, 14, generator=g)
+    targets = torch.randint(0, 2, (4, 14), generator=g).float()
+    pos = torch.linspace(1, 3, 14)
+    expected = F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos)
+    assert torch.allclose(bce(logits, targets, None, pos), expected)
 
 
 def test_ema_follows_closed_form_after_three_updates() -> None:

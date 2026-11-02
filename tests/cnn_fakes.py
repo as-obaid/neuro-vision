@@ -55,13 +55,15 @@ def write_config(
     prob: float = 0.2,
     early_stop_patience: int | None = None,
     loss_weights: str = "uniform",
+    pos_weight: str = "null",
 ) -> Path:
     patience = "null" if early_stop_patience is None else early_stop_patience
     path.write_text(
         "kind: cnn\nseed: 0\nlabels: corrected\n"
         f"train: {{epochs: {epochs}, batch_size: 2, accum_steps: 1, lr: 1.0e-3,"
         f" weight_decay: 0.01, warmup_epochs: 1, ema_decay: 0.9, loss_weights: {loss_weights},"
-        f" num_workers: {num_workers}, early_stop_patience: {patience}}}\n"
+        f" num_workers: {num_workers}, early_stop_patience: {patience},"
+        f" pos_weight: {pos_weight}}}\n"
         f"augment: {{prob: {prob}, noise_std: 0.1, gamma: [0.7, 1.5], rotate_deg: 10,"
         " scale: 0.1, lowres_zoom: [0.5, 1.0]}\n"
     )

@@ -126,6 +126,18 @@ def test_evaluate_weights_the_loss_like_training() -> None:
     assert loss == pytest.approx(expected, rel=1e-4)
 
 
+def test_evaluate_scales_positive_terms_like_training() -> None:
+    model = nn.Sequential(nn.Flatten(), nn.Linear(8**3, 14))
+    x, y = _data(5, size=8)
+    pos = torch.linspace(1, 3, 14)
+    loader = DataLoader(TensorDataset(x, y), batch_size=2)
+    probs, loss = evaluate(model, loader, CPU, None, pos)
+    p = torch.from_numpy(probs).double()
+    yd = y.double()
+    expected = -(pos * yd * p.log() + (1 - yd) * (1 - p).log()).mean().item()
+    assert loss == pytest.approx(expected, rel=1e-4)
+
+
 def test_accumulation_matches_one_big_batch() -> None:
     x, y = _pair(2, 1)
     big = _linear_step([(x, y)], 1)

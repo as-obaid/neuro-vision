@@ -21,6 +21,7 @@ TRAIN = {
     "loss_weights": "uniform",
     "num_workers": 8,
     "early_stop_patience": 5,
+    "pos_weight": None,
 }
 AUGMENT = {
     "prob": 0.2,
@@ -143,6 +144,7 @@ def test_non_positive_value_raises(tmp_path: Path) -> None:
         ("train", "num_workers", -1),
         ("train", "early_stop_patience", 0),
         ("train", "loss_weights", "metric"),
+        ("train", "pos_weight", "linear"),
         ("augment", "prob", -0.1),
         ("augment", "prob", 1.1),
         ("augment", "noise_std", -0.1),

@@ -1,0 +1,3 @@
+extends: b2_loss_competition.yaml
+# Locations are 1-8% positive; a positive weighs sqrt(negatives / positives), about 3-10.
+train: {pos_weight: sqrt}

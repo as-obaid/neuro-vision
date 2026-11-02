@@ -13,7 +13,7 @@ from neurovision.config import load_config
 from neurovision.data.labels import TARGETS
 from neurovision.train import loop
 from neurovision.train.loop import fit, stalled, train_loader, val_loader
-from neurovision.train.losses import label_weights
+from neurovision.train.losses import label_weights, positive_weights
 from tests.cnn_fakes import fold0_datasets, write_config, write_store
 
 PRIOR = np.full(14, 0.3)
@@ -39,6 +39,7 @@ def _fit(
     epochs: int = 2,
     early_stop_patience: int | None = None,
     loss_weights: str = "uniform",
+    pos_weight: str = "null",
 ) -> Path:
     if not (tmp_path / "store").exists():
         write_store(tmp_path / "store")
@@ -47,6 +48,7 @@ def _fit(
         epochs=epochs,
         early_stop_patience=early_stop_patience,
         loss_weights=loss_weights,
+        pos_weight=pos_weight,
     )
     config = load_config(path)
     train_ds, val_ds, val_uids = fold0_datasets(tmp_path / "store")
@@ -348,17 +350,41 @@ def test_fit_trains_and_validates_with_the_configured_weights(
     seen = []
     real_bce, real_evaluate = loop.bce, loop.evaluate
 
-    def spy_bce(logits, targets, weights=None):
+    def spy_bce(logits, targets, weights=None, pos_weight=None):
         seen.append(("train", weights))
-        return real_bce(logits, targets, weights)
+        return real_bce(logits, targets, weights, pos_weight)
 
-    def spy_evaluate(model, loader, device, weights=None):
+    def spy_evaluate(model, loader, device, weights=None, pos_weight=None):
         seen.append(("val", weights))
-        return real_evaluate(model, loader, device, weights)
+        return real_evaluate(model, loader, device, weights, pos_weight)
 
     monkeypatch.setattr(loop, "bce", spy_bce)
     monkeypatch.setattr(loop, "evaluate", spy_evaluate)
     _fit(tmp_path, "run", epochs=2, loss_weights="competition")
     expected = label_weights("competition")
     stages = {stage for stage, w in seen if w is not None and torch.equal(w.cpu(), expected)}
+    assert stages == {"train", "val"}
+
+
+def test_fit_uses_positive_weights_from_the_training_split(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = []
+    real_bce, real_evaluate = loop.bce, loop.evaluate
+
+    def spy_bce(logits, targets, weights=None, pos_weight=None):
+        seen.append(("train", pos_weight))
+        return real_bce(logits, targets, weights, pos_weight)
+
+    def spy_evaluate(model, loader, device, weights=None, pos_weight=None):
+        seen.append(("val", pos_weight))
+        return real_evaluate(model, loader, device, weights, pos_weight)
+
+    monkeypatch.setattr(loop, "bce", spy_bce)
+    monkeypatch.setattr(loop, "evaluate", spy_evaluate)
+    _fit(tmp_path, "run", epochs=2, pos_weight="sqrt")
+    train_ds, _, _ = fold0_datasets(tmp_path / "store")
+    expected = positive_weights(train_ds.targets, "sqrt")
+    assert expected is not None
+    stages = {s for s, w in seen if w is not None and torch.allclose(w.cpu(), expected)}
     assert stages == {"train", "val"}
