@@ -4,7 +4,7 @@ A 3D CNN reads one brain scan and flags an intracranial aneurysm and its artery.
 image model (B2) scores **0.685**, against 0.632 for metadata alone. The gain holds on fold 0 only;
 five folds confirm it next.
 
-Full report: https://forge.coreweave.com/muhammadobaidullah98-northeastern-university/neuro-vision/reports/Neuro-Vision:-midterm-checkpoint--VmlldzoxODIzOTI4Nw==
+Full report: https://forge.coreweave.com/wandb/muhammadobaidullah98-northeastern-university/neuro-vision/reports/Neuro-Vision:-midterm-checkpoint--VmlldzoxODIzOTI4Nw==
 
 Scores are on fold 0 (870 validation series) unless marked 5-fold. Figures are in `docs/figures/`.
 
@@ -132,7 +132,7 @@ Source: the experiment log (from `history.csv`).*
 | Head-only first epoch | Does it protect the pretrained filters? | 0.669 (7) | 0.664 | No effect |
 | Augmentation probability 0.5 | Does more augmentation curb the overfit? | 0.667 (7) | 0.664 | Less overfit, same AUC |
 | Loss weights 13:1 | Should the loss match the score's weights? | 0.679 (6) | 0.674 | Under the bar |
-| **Left-right flip** | Mirror the head and swap left/right labels: twice the examples per side | **0.686 (7)** | **0.682** | **Kept** |
+| **Left-right flip** | Mirror the head and swap left/right labels: twice the examples per side | **0.686 (7)** | **0.681** | **Kept** |
 | Flip + backbone 0.3 x lr | Do the two gains stack? | 0.680 (9) | 0.680 | Below flip alone |
 | Flip + backbone 0.3 x + loss weights | Do three gains stack? | 0.672 (9) | 0.672 | Below flip alone |
 | Flip + positive weights | Do rare locations need more weight? | 0.681 (7) | 0.681 | Below flip alone |
