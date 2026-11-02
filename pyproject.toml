@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Neuro-Vision: vessel-guided detection and localization of intracranial aneurysms."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
 authors = [{ name = "Muhammad Obaidullah" }]
 dependencies = [
     "monai==1.6.1",
