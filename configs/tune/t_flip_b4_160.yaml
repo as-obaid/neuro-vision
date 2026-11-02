@@ -1,0 +1,3 @@
+extends: t_flip_b4.yaml
+# 160-cubed input at batch 4 x 2 (fits an L40S): an aneurysm spans 2-5 voxels at 128, about 1.25x more per axis here.
+train: {input_size: 160}
