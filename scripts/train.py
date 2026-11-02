@@ -15,7 +15,7 @@ from neurovision.data.augment import build_augment
 from neurovision.data.dataset import CacheDataset, load_index
 from neurovision.data.folds import load_folds
 from neurovision.data.labels import TARGETS, load_labels
-from neurovision.data.preprocess import ERROR_PREFIX
+from neurovision.data.preprocess import ERROR_PREFIX, cache_name
 from neurovision.paths import atomic_write, fold_dir, store
 from neurovision.track.meta import run_meta
 from neurovision.train.loop import fit
@@ -28,13 +28,15 @@ def _train_cnn(config: Config, fold: int) -> None:
         raise SystemExit(f"fold {fold} is not in folds.csv")
     labels = load_labels(root, config.labels).loc[folds.index, list(TARGETS)]
     assert config.train is not None
-    cache = root / "cache" / f"b2-{config.train.input_size}"
+    size, resample = config.train.input_size, config.train.resample
+    cache = root / "cache" / cache_name(size, resample)
     index = load_index(cache)
     missing = len(folds.index.difference(index.index))
     if missing:
+        flags = f"--size {size}" + ("" if resample == "cube" else f" --resample {resample}")
         raise SystemExit(
             f"{missing} of {len(folds)} series have no row in {cache.relative_to(root)}/index.csv; "
-            f"rerun slurm/preprocess.sbatch --size {config.train.input_size}"
+            f"rerun slurm/preprocess.sbatch {flags}"
         )
     ok = set(index.index[index["status"] == "ok"])
 

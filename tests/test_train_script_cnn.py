@@ -89,6 +89,20 @@ def test_input_size_selects_the_cache_folder(setup, tmp_path: Path) -> None:
     assert (store / "runs" / "b2_160" / "fold0" / "oof.csv").exists()
 
 
+def test_resample_mm_selects_the_mm_cache_folder(setup, tmp_path: Path) -> None:
+    train, _, store, _ = setup
+    config = str(write_config(tmp_path / "b2_mm.yaml", input_size=160, resample="mm"))
+    (store / "cache" / "b2-128").rename(store / "cache" / "b2mm-160")
+    index_path = store / "cache" / "b2mm-160" / "index.csv"
+    index = pd.read_csv(index_path)
+    index.iloc[1:].to_csv(index_path, index=False)
+    with pytest.raises(SystemExit, match=r"cache/b2mm-160/index.csv.*--size 160 --resample mm"):
+        train.main([config, "--fold", "0"])
+    index.to_csv(index_path, index=False)
+    train.main([config, "--fold", "0"])
+    assert (store / "runs" / "b2_mm" / "fold0" / "oof.csv").exists()
+
+
 def test_counts_are_printed_and_stored(setup, capsys: pytest.CaptureFixture[str]) -> None:
     train, _, store, config = setup
     train.main([config, "--fold", "0"])

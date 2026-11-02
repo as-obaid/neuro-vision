@@ -19,6 +19,7 @@ dependencies = [
     "pydicom==3.0.2",
     "pyyaml==6.0.3",
     "scikit-learn==1.9.1",
+    "scipy==1.18.1",
     "torch==2.13.0",
     "torchvision==0.28.0",
     "wandb==0.31.0",
@@ -70,5 +71,7 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 
 [[tool.mypy.overrides]]
-module = ["pandas", "pandas.*", "sklearn", "sklearn.*", "torchvision", "torchvision.*"]
+module = [
+    "pandas", "pandas.*", "scipy", "scipy.*", "sklearn", "sklearn.*", "torchvision", "torchvision.*",
+]
 ignore_missing_imports = true

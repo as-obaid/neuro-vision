@@ -62,6 +62,7 @@ def write_config(
     backbone_lr_scale: float = 1.0,
     input_size: int = 128,
     head: str = "linear",
+    resample: str = "cube",
 ) -> Path:
     patience = "null" if early_stop_patience is None else early_stop_patience
     path.write_text(
@@ -71,7 +72,8 @@ def write_config(
         f" num_workers: {num_workers}, early_stop_patience: {patience},"
         f" pos_weight: {pos_weight}, init: {init}, backbone: {backbone},"
         f" freeze_epochs: {freeze_epochs},"
-        f" backbone_lr_scale: {backbone_lr_scale}, input_size: {input_size}, head: {head}}}\n"
+        f" backbone_lr_scale: {backbone_lr_scale}, input_size: {input_size}, head: {head},"
+        f" resample: {resample}}}\n"
         f"augment: {{prob: {prob}, noise_std: 0.1, gamma: [0.7, 1.5], rotate_deg: 10,"
         " scale: 0.1, lowres_zoom: [0.5, 1.0]}\n"
     )

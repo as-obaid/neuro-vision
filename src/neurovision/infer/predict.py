@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from neurovision.data.preprocess import SIZE, preprocess_series
+from neurovision.data.preprocess import SIZE, Resample, preprocess_series
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +21,18 @@ def predict_volumes(model: nn.Module, x: torch.Tensor) -> np.ndarray:
 
 
 def predict_series(
-    series_dir: Path, model: nn.Module, prior: np.ndarray, size: int = SIZE
+    series_dir: Path,
+    model: nn.Module,
+    prior: np.ndarray,
+    size: int = SIZE,
+    resample: Resample = "cube",
 ) -> np.ndarray:
     """Probabilities, `(14,)`, for one DICOM series; `prior` when the series cannot be read.
 
-    `size` is the training config's `train.input_size`.
+    `size` and `resample` are the training config's `train.input_size` and `train.resample`.
     """
     try:
-        volume = preprocess_series(series_dir, size)
+        volume = preprocess_series(series_dir, size, resample)
     except Exception as error:  # a Kaggle run must never crash on one bad series
         logger.warning("series unreadable (%s); returning the prior", type(error).__name__)
         return prior.astype(np.float32)

@@ -28,6 +28,7 @@ TRAIN = {
     "backbone_lr_scale": 1.0,
     "input_size": 128,
     "head": "linear",
+    "resample": "cube",
 }
 AUGMENT = {
     "prob": 0.2,
@@ -364,3 +365,26 @@ def test_half_augmentation_config_changes_only_the_probability() -> None:
     assert _tune_diff("t_flip_b4_r34_aug0.1.yaml", "t_flip_b4_r34.yaml") == {"augment.prob"}
     cfg = load_config(CONFIGS / "tune" / "t_flip_b4_r34_aug0.1.yaml")
     assert cfg.augment is not None and cfg.augment.prob == 0.1
+
+
+def test_resample_defaults_to_cube_and_accepts_mm(tmp_path: Path) -> None:
+    train = {k: v for k, v in TRAIN.items() if k != "resample"}
+    body = {"kind": "cnn", "seed": 0, "labels": "corrected", "augment": AUGMENT}
+    write(tmp_path / "x.yaml", {**body, "train": train})
+    cfg = load_config(tmp_path / "x.yaml")
+    assert cfg.train is not None and cfg.train.resample == "cube"
+    write(tmp_path / "y.yaml", {**body, "train": {**train, "resample": "mm"}})
+    cfg = load_config(tmp_path / "y.yaml")
+    assert cfg.train is not None and cfg.train.resample == "mm"
+    write(tmp_path / "z.yaml", {**body, "train": {**train, "resample": "crop"}})
+    with pytest.raises(ValidationError):
+        load_config(tmp_path / "z.yaml")
+
+
+def test_mm_config_changes_only_the_resample() -> None:
+    assert _tune_diff("t_flip_b4_r3d18_mm160.yaml", "t_flip_b4_r3d18_160.yaml") == {
+        "train.resample"
+    }
+    cfg = load_config(CONFIGS / "tune" / "t_flip_b4_r3d18_mm160.yaml")
+    assert cfg.train is not None
+    assert (cfg.train.resample, cfg.train.input_size, cfg.train.backbone) == ("mm", 160, "r3d18")

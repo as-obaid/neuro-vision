@@ -43,6 +43,9 @@ class TrainConfig(_Frozen):
     input_size: Literal[128, 160] = 128
     # "mlp": 512 -> 256 -> 14 with LayerNorm, ReLU and dropout, random start; "linear": one layer
     head: Literal["linear", "mlp"] = "linear"
+    # "cube": the whole scan resized to input_size³ (cache/b2-{input_size}); "mm": 1 mm voxels,
+    # an input_size³ box on the head (cache/b2mm-{input_size})
+    resample: Literal["cube", "mm"] = "cube"
 
     @model_validator(mode="after")
     def _warmup_fits_in_training(self) -> Self:
