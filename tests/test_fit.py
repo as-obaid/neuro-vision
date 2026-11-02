@@ -40,6 +40,9 @@ def _fit(
     early_stop_patience: int | None = None,
     loss_weights: str = "uniform",
     pos_weight: str = "null",
+    init: str = "random",
+    freeze_epochs: int = 0,
+    backbone_lr_scale: float = 1.0,
 ) -> Path:
     if not (tmp_path / "store").exists():
         write_store(tmp_path / "store")
@@ -49,6 +52,9 @@ def _fit(
         early_stop_patience=early_stop_patience,
         loss_weights=loss_weights,
         pos_weight=pos_weight,
+        init=init,
+        freeze_epochs=freeze_epochs,
+        backbone_lr_scale=backbone_lr_scale,
     )
     config = load_config(path)
     train_ds, val_ds, val_uids = fold0_datasets(tmp_path / "store")
@@ -388,3 +394,26 @@ def test_fit_uses_positive_weights_from_the_training_split(
     assert expected is not None
     stages = {s for s, w in seen if w is not None and torch.allclose(w.cpu(), expected)}
     assert stages == {"train", "val"}
+
+
+def test_frozen_start_and_two_rates_train_and_log_the_head_rate(tmp_path: Path) -> None:
+    run_dir = _fit(tmp_path, "run", epochs=2, freeze_epochs=1, backbone_lr_scale=0.5)
+    history = pd.read_csv(run_dir / "history.csv")
+    assert list(history["epoch"]) == [0, 1]
+    assert history["lr"].iloc[0] == pytest.approx(1e-3)  # head rate after the warmup epoch
+
+
+def test_imagenet_init_builds_from_the_store_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, Path | None]] = []
+    real = loop.build_model
+
+    def spy(init: str = "random", weights_dir: Path | None = None) -> torch.nn.Module:
+        calls.append((init, weights_dir))
+        return real()
+
+    monkeypatch.setattr(loop, "build_model", spy)
+    monkeypatch.setenv("NV_STORE", str(tmp_path / "store"))
+    _fit(tmp_path, "run", init="imagenet")
+    assert calls[0] == ("imagenet", tmp_path / "store" / "weights")

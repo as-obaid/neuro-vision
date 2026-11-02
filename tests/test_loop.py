@@ -12,7 +12,14 @@ from torch.utils.data import DataLoader, TensorDataset
 from neurovision.infer.predict import predict_volumes
 from neurovision.models.resnet3d import build_model
 from neurovision.train.ema import make_ema
-from neurovision.train.loop import evaluate, load_checkpoint, save_checkpoint, train_one_epoch
+from neurovision.train.loop import (
+    evaluate,
+    load_checkpoint,
+    param_groups,
+    save_checkpoint,
+    set_backbone_trainable,
+    train_one_epoch,
+)
 from neurovision.train.losses import label_weights
 from neurovision.train.schedule import cosine_with_warmup
 
@@ -179,3 +186,38 @@ def test_predict_volumes_runs_in_float32_so_close_logits_stay_distinct() -> None
     with torch.autocast("cpu", dtype=torch.bfloat16):  # a caller's autocast must not leak in
         probs = predict_volumes(model, x)
     assert probs[0, 0] != probs[1, 0]
+
+
+def test_frozen_backbone_trains_only_the_head() -> None:
+    torch.manual_seed(0)
+    model = build_model()
+    set_backbone_trainable(model, False)
+    before = {k: v.clone() for k, v in model.state_dict().items()}
+    optimizer = AdamW(model.parameters(), lr=1e-2)
+    model(torch.randn(2, 1, 16, 16, 16)).sum().backward()
+    optimizer.step()
+    after = model.state_dict()
+    assert not torch.equal(after["fc.weight"], before["fc.weight"])
+    torch.testing.assert_close(after["conv1.weight"], before["conv1.weight"])
+    torch.testing.assert_close(after["layer4.1.conv2.weight"], before["layer4.1.conv2.weight"])
+    set_backbone_trainable(model, True)
+    assert all(p.requires_grad for p in model.parameters())
+
+
+def test_param_groups_put_the_head_first_at_the_full_rate() -> None:
+    model = build_model()
+    head, rest = param_groups(model, 3e-4, 0.1)
+    assert head["lr"] == 3e-4
+    assert rest["lr"] == pytest.approx(3e-5)
+    assert {id(p) for p in head["params"]} == {
+        id(model.get_parameter("fc.weight")),
+        id(model.get_parameter("fc.bias")),
+    }
+    grouped = sorted(id(p) for g in (head, rest) for p in g["params"])
+    assert grouped == sorted(id(p) for p in model.parameters())
+
+
+def test_param_groups_at_scale_one_is_one_group() -> None:
+    model = build_model()
+    (group,) = param_groups(model, 3e-4, 1.0)
+    assert len(group["params"]) == len(list(model.parameters()))

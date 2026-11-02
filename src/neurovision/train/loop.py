@@ -23,8 +23,8 @@ from neurovision.data.dataset import CacheDataset
 from neurovision.data.labels import TARGETS
 from neurovision.evaluate.metric import score
 from neurovision.infer.predict import predict_volumes
-from neurovision.models.resnet3d import build_model
-from neurovision.paths import atomic_write
+from neurovision.models.resnet3d import HEAD, build_model
+from neurovision.paths import atomic_write, store
 from neurovision.track import log
 from neurovision.track.meta import run_meta
 from neurovision.train.ema import make_ema
@@ -202,8 +202,11 @@ def fit(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pin = device.type == "cuda"
     torch.manual_seed(config.seed)
-    model = build_model().to(device)
-    optimizer = AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    weights_dir = store() / "weights" if cfg.init == "imagenet" else None
+    model = build_model(cfg.init, weights_dir).to(device)
+    optimizer = AdamW(
+        param_groups(model, cfg.lr, cfg.backbone_lr_scale), lr=cfg.lr, weight_decay=cfg.weight_decay
+    )
     steps_per_epoch = math.ceil(math.ceil(len(train_ds) / cfg.batch_size) / cfg.accum_steps)
     scheduler = cosine_with_warmup(
         optimizer, cfg.warmup_epochs * steps_per_epoch, cfg.epochs * steps_per_epoch
@@ -220,6 +223,7 @@ def fit(
         for epoch in range(first_epoch, cfg.epochs):
             if stalled([r["val_loss"] for r in rows], cfg.early_stop_patience):
                 break
+            set_backbone_trainable(model, epoch >= cfg.freeze_epochs)
             t0 = time.perf_counter()
             train_loss = train_one_epoch(
                 model,
@@ -268,6 +272,27 @@ def stalled(val_losses: list[float], patience: int | None) -> bool:
     if patience is None or not val_losses:
         return False
     return len(val_losses) - 1 - int(np.argmin(val_losses)) >= patience
+
+
+def set_backbone_trainable(model: nn.Module, trainable: bool) -> None:
+    """Freeze or unfreeze every layer but the head; BatchNorm statistics still update."""
+    for name, p in model.named_parameters():
+        if not name.startswith(HEAD):
+            p.requires_grad_(trainable)
+
+
+def param_groups(model: nn.Module, lr: float, backbone_lr_scale: float) -> list[dict[str, Any]]:
+    """One group at the optimizer's rate; or the head first at lr, every other layer at lr x scale.
+
+    The head comes first so history's `lr` column (group 0) is the base rate in every run.
+    """
+    if backbone_lr_scale == 1:
+        return [{"params": list(model.parameters())}]
+    named = list(model.named_parameters())
+    return [
+        {"params": [p for n, p in named if n.startswith(HEAD)], "lr": lr},
+        {"params": [p for n, p in named if not n.startswith(HEAD)], "lr": lr * backbone_lr_scale},
+    ]
 
 
 def _resume(

@@ -31,11 +31,19 @@ class TrainConfig(_Frozen):
     num_workers: int = Field(ge=0)
     # stop once validation loss has not improved for this many epochs; None trains every epoch
     early_stop_patience: PositiveInt | None = None
+    # "imagenet": torchvision's ResNet-18 ImageNet weights inflated to 3D; the head starts random
+    init: Literal["random", "imagenet"] = "random"
+    # the first this many epochs train only the head; every layer trains after
+    freeze_epochs: int = Field(default=0, ge=0)
+    # every layer but the head trains at lr x this
+    backbone_lr_scale: float = Field(default=1.0, gt=0, le=1)
 
     @model_validator(mode="after")
     def _warmup_fits_in_training(self) -> Self:
         if self.warmup_epochs >= self.epochs:
             raise ValueError("warmup_epochs must be less than epochs")
+        if self.freeze_epochs >= self.epochs:
+            raise ValueError("freeze_epochs must be less than epochs")
         return self
 
 

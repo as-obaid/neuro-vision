@@ -1,0 +1,4 @@
+extends: b2_imagenet.yaml
+# Only the head trains for the first 2 epochs, so the random head settles before the pretrained
+# layers move; every layer trains after.
+train: {freeze_epochs: 2}

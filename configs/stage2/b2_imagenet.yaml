@@ -1,0 +1,3 @@
+extends: ../base/b2.yaml
+# Start from ImageNet ResNet-18 weights inflated to 3D; every other setting as B2.
+train: {init: imagenet}

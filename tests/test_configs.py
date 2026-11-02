@@ -22,6 +22,9 @@ TRAIN = {
     "num_workers": 8,
     "early_stop_patience": 5,
     "pos_weight": None,
+    "init": "random",
+    "freeze_epochs": 0,
+    "backbone_lr_scale": 1.0,
 }
 AUGMENT = {
     "prob": 0.2,
@@ -145,6 +148,11 @@ def test_non_positive_value_raises(tmp_path: Path) -> None:
         ("train", "early_stop_patience", 0),
         ("train", "loss_weights", "metric"),
         ("train", "pos_weight", "linear"),
+        ("train", "init", "medicalnet"),
+        ("train", "freeze_epochs", -1),
+        ("train", "freeze_epochs", 30),
+        ("train", "backbone_lr_scale", 0),
+        ("train", "backbone_lr_scale", 1.5),
         ("augment", "prob", -0.1),
         ("augment", "prob", 1.1),
         ("augment", "noise_std", -0.1),
