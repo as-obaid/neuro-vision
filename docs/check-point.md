@@ -26,7 +26,7 @@ Labels:
 
 ## 2 Splits and leakage
 
-Headers (second header scan; step 5):
+Headers (header scan; source `results/headers.json`):
 
 | Header | Finding |
 |:--|:--|
