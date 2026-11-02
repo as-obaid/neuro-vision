@@ -164,7 +164,7 @@ fits on one card). Gain is against the parent in brackets. Source: `history.csv`
 | Fix 1 + aug 0.1 (fix 1) | Augmentation probability 0.1 | 0.702 (7) | 0.699 | -0.002 / -0.004 | Lower |
 | **Fix 1 + aug 0.1 + lr x 2** (fix 1 + aug 0.1) | lr 6e-4 head, 6e-5 backbone | **0.711 (7)** | **0.708** | **+0.009 / +0.009** | **Best run** |
 | r3d_18 160³ + aug 0.1 + lr x 2 (+ aug 0.1) | lr x 2 without fix 1 | running, ends about 16:20 | | | |
-| Best + batch 16 (best run) | Batch 16 x 1, lr 1.2e-3 (two changes) | running, ends about 16:35 | | | |
+| Best + batch 16 (best run) | Batch 16 x 1, lr 1.2e-3 (two changes) | stopped after epoch 2 | | -0.022 to -0.012 at epochs 0-2 | Dropped |
 | MLP head (ResNet-34; r3d_18; r3d_18 + aug 0.1) | 512-256-14 MLP: LayerNorm, ReLU, dropout 0.1 | 0.679; 0.693; 0.691 | | -0.011; -0.005; -0.010 | Dropped |
 | Aug 0.1 (ResNet-34; r3d_18) | Augmentation probability 0.1 | 0.694; 0.701 | 0.691; 0.700 | +0.004 / +0.003; +0.003 / +0.002 | Small |
 
@@ -184,6 +184,8 @@ Findings (round 3):
   at lr 3e-4 under-train. Over the best old-rate run: +0.006 / +0.003.
 - **No gain:** the MLP head (slow start: 0.53 vs 0.56-0.57 at epoch 0); aug 0.1 (sign mixed, noise level).
 - **In total:** +0.027 best, +0.026 final over the control. Only r3d_18 cleared 0.010 alone.
+
+![Fold-0 validation score per epoch for the round 3 path from the control to the best run](figures/checkpoint-round3-curves.png)
 
 ## 5 Behaviour analysis
 
