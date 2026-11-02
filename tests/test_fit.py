@@ -43,6 +43,7 @@ def _fit(
     init: str = "random",
     freeze_epochs: int = 0,
     backbone_lr_scale: float = 1.0,
+    backbone: str = "resnet18",
 ) -> Path:
     if not (tmp_path / "store").exists():
         write_store(tmp_path / "store")
@@ -53,6 +54,7 @@ def _fit(
         loss_weights=loss_weights,
         pos_weight=pos_weight,
         init=init,
+        backbone=backbone,
         freeze_epochs=freeze_epochs,
         backbone_lr_scale=backbone_lr_scale,
     )
@@ -409,7 +411,9 @@ def test_imagenet_init_builds_from_the_store_weights(
     calls: list[tuple[str, Path | None]] = []
     real = loop.build_model
 
-    def spy(init: str = "random", weights_dir: Path | None = None) -> torch.nn.Module:
+    def spy(
+        backbone: str = "resnet18", init: str = "random", weights_dir: Path | None = None
+    ) -> torch.nn.Module:
         calls.append((init, weights_dir))
         return real()
 
@@ -417,3 +421,19 @@ def test_imagenet_init_builds_from_the_store_weights(
     monkeypatch.setenv("NV_STORE", str(tmp_path / "store"))
     _fit(tmp_path, "run", init="imagenet")
     assert calls[0] == ("imagenet", tmp_path / "store" / "weights")
+
+
+def test_fit_builds_the_configured_backbone_for_training_and_for_the_best_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+    real = loop.build_model
+
+    def spy(backbone: str = "resnet18", init: str = "random", weights_dir: Path | None = None):  # type: ignore[no-untyped-def]
+        seen.append(backbone)
+        return real(backbone, init, weights_dir)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(loop, "build_model", spy)
+    run_dir = _fit(tmp_path, "run", backbone="resnet34")
+    assert seen == ["resnet34", "resnet34"]  # the training model, then the one best.pt loads into
+    assert (run_dir / "meta.json").exists()

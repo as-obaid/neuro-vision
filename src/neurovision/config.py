@@ -31,8 +31,10 @@ class TrainConfig(_Frozen):
     num_workers: int = Field(ge=0)
     # stop once validation loss has not improved for this many epochs; None trains every epoch
     early_stop_patience: PositiveInt | None = None
-    # "imagenet": torchvision's ResNet-18 ImageNet weights inflated to 3D; the head starts random
-    init: Literal["random", "imagenet"] = "random"
+    backbone: Literal["resnet18", "resnet34", "resnet50", "r3d18"] = "resnet18"
+    # "imagenet": torchvision's 2D ResNet weights inflated to 3D (resnet* backbones);
+    # "kinetics": torchvision's r3d_18 Kinetics-400 weights (r3d18); the head starts random
+    init: Literal["random", "imagenet", "kinetics"] = "random"
     # the first this many epochs train only the head; every layer trains after
     freeze_epochs: int = Field(default=0, ge=0)
     # every layer but the head trains at lr x this
@@ -46,6 +48,14 @@ class TrainConfig(_Frozen):
             raise ValueError("warmup_epochs must be less than epochs")
         if self.freeze_epochs >= self.epochs:
             raise ValueError("freeze_epochs must be less than epochs")
+        return self
+
+    @model_validator(mode="after")
+    def _init_fits_backbone(self) -> Self:
+        if self.init == "imagenet" and not self.backbone.startswith("resnet"):
+            raise ValueError("init imagenet needs a resnet backbone")
+        if self.init == "kinetics" and self.backbone != "r3d18":
+            raise ValueError("init kinetics needs the r3d18 backbone")
         return self
 
 

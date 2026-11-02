@@ -23,7 +23,7 @@ from neurovision.data.dataset import CacheDataset
 from neurovision.data.labels import TARGETS
 from neurovision.evaluate.metric import score
 from neurovision.infer.predict import predict_volumes
-from neurovision.models.resnet3d import HEAD, build_model
+from neurovision.models.resnet3d import HEAD, Backbone, build_model
 from neurovision.paths import atomic_write, store
 from neurovision.track import log
 from neurovision.track.meta import run_meta
@@ -203,8 +203,8 @@ def fit(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pin = device.type == "cuda"
     torch.manual_seed(config.seed)
-    weights_dir = store() / "weights" if cfg.init == "imagenet" else None
-    model = build_model(cfg.init, weights_dir).to(device)
+    weights_dir = store() / "weights" if cfg.init != "random" else None
+    model = build_model(cfg.backbone, cfg.init, weights_dir).to(device)
     optimizer = AdamW(
         param_groups(model, cfg.lr, cfg.backbone_lr_scale), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
@@ -263,7 +263,7 @@ def fit(
                 run_dir / "last.pt", model, ema, optimizer, scheduler, epoch, best_score, peak
             )
         meta |= {"counts": dict(counts), "peak_gpu_memory_mib": peak}
-        _write_outputs(meta, run_dir, val_ds, val_uids, prior, valid, rows, device)
+        _write_outputs(meta, run_dir, val_ds, val_uids, prior, valid, rows, device, cfg.backbone)
     finally:
         run.finish({"best_val_score": best_score})
 
@@ -323,9 +323,10 @@ def _write_outputs(
     valid: DataLoader,
     rows: list[dict[str, float]],
     device: torch.device,
+    backbone: Backbone,
 ) -> None:
     """oof.csv first, meta.json last: meta.json marks the run complete."""
-    best = build_model()
+    best = build_model(backbone)
     best.load_state_dict(torch.load(run_dir / "best.pt", map_location="cpu", weights_only=True))
     probs, _ = evaluate(best, valid, device)
     oof = pd.DataFrame(

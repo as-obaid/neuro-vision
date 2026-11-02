@@ -5,3 +5,24 @@ imagenet_resnet18:
   sha256: f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec
   retrieved: 2026-11-02
   use: inflated to 3D for configs with train.init imagenet (src/neurovision/models/resnet3d.py)
+imagenet_resnet34:
+  source: torchvision ResNet34_Weights.IMAGENET1K_V1
+  url: https://download.pytorch.org/models/resnet34-b627a593.pth
+  file: weights/resnet34-b627a593.pth
+  sha256: b627a593bcbe140c234610266fe4f8ae95ea42fc881d091c9b6052e6b1d0590f
+  retrieved: 2026-11-02
+  use: inflated to 3D for configs with train.backbone resnet34 and train.init imagenet (src/neurovision/models/resnet3d.py)
+imagenet_resnet50:
+  source: torchvision ResNet50_Weights.IMAGENET1K_V1
+  url: https://download.pytorch.org/models/resnet50-0676ba61.pth
+  file: weights/resnet50-0676ba61.pth
+  sha256: 0676ba61b6795bbe1773cffd859882e5e297624d384b6993f7c9e683e722fb8a
+  retrieved: 2026-11-02
+  use: inflated to 3D for configs with train.backbone resnet50 and train.init imagenet (src/neurovision/models/resnet3d.py)
+kinetics_r3d18:
+  source: torchvision R3D_18_Weights.KINETICS400_V1
+  url: https://download.pytorch.org/models/r3d_18-b3b3357e.pth
+  file: weights/r3d_18-b3b3357e.pth
+  sha256: b3b3357ead25631ec9c57362ff2128a92d0427e01e2cd184951a44380c3f2e9d
+  retrieved: 2026-11-02
+  use: loaded for configs with train.backbone r3d18 and train.init kinetics; the stem sums to one channel (src/neurovision/models/resnet3d.py)

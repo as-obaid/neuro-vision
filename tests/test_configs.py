@@ -23,6 +23,7 @@ TRAIN = {
     "early_stop_patience": 5,
     "pos_weight": None,
     "init": "random",
+    "backbone": "resnet18",
     "freeze_epochs": 0,
     "backbone_lr_scale": 1.0,
     "input_size": 128,
@@ -235,6 +236,8 @@ def test_stage2_configs_change_one_variable() -> None:
 
 
 TUNE = sorted((CONFIGS / "tune").glob("*.yaml"))
+# configs with their own exact-diff tests: the reference, the batch control, the Kinetics arm
+TUNE_MULTI_LEAF = {"t_r0.yaml", "t_flip_b4.yaml", "t_flip_b4_r3d18.yaml"}
 
 
 def test_tune_configs_train_ten_epochs_without_early_stop() -> None:
@@ -249,7 +252,7 @@ def test_tune_configs_train_ten_epochs_without_early_stop() -> None:
 
 def test_tune_configs_change_one_variable() -> None:
     for child in TUNE:
-        if child.name != "t_r0.yaml":
+        if child.name not in TUNE_MULTI_LEAF:
             check_one_variable(child)
 
 
@@ -300,3 +303,37 @@ def test_t_bb0_3_160_changes_only_the_input_size() -> None:
         resolve(CONFIGS / "tune" / "t_bb0.3_160.yaml"), resolve(CONFIGS / "tune" / "t_bb0.3.yaml")
     )
     assert diff == {"train.input_size"}
+
+
+def _tune_diff(child: str, parent: str) -> set[str]:
+    return changed_leaves(resolve(CONFIGS / "tune" / child), resolve(CONFIGS / "tune" / parent))
+
+
+def test_batch_control_changes_only_batch_and_accumulation() -> None:
+    assert _tune_diff("t_flip_b4.yaml", "t_flip.yaml") == {"train.batch_size", "train.accum_steps"}
+    cfg = load_config(CONFIGS / "tune" / "t_flip_b4.yaml")
+    assert cfg.train is not None
+    assert cfg.train.batch_size * cfg.train.accum_steps == 8
+
+
+def test_resnet_backbone_configs_change_only_the_backbone() -> None:
+    for name in ("r34", "r50"):
+        stem = f"t_flip_b4_{name}"
+        assert _tune_diff(f"{stem}.yaml", "t_flip_b4.yaml") == {"train.backbone"}
+    cfg = load_config(CONFIGS / "tune" / "t_flip_b4_r50.yaml")
+    assert cfg.train is not None and cfg.train.backbone == "resnet50"
+
+
+def test_kinetics_config_changes_only_backbone_and_init() -> None:
+    diff = _tune_diff("t_flip_b4_r3d18.yaml", "t_flip_b4.yaml")
+    assert diff == {"train.backbone", "train.init"}
+    cfg = load_config(CONFIGS / "tune" / "t_flip_b4_r3d18.yaml")
+    assert cfg.train is not None
+    assert (cfg.train.backbone, cfg.train.init) == ("r3d18", "kinetics")
+
+
+def test_init_must_fit_the_backbone() -> None:
+    for backbone, init in [("r3d18", "imagenet"), ("resnet18", "kinetics")]:
+        train = {**TRAIN, "backbone": backbone, "init": init}
+        with pytest.raises(ValueError, match="needs"):
+            Config.model_validate({"kind": "cnn", "train": train})
