@@ -33,6 +33,7 @@ AUGMENT = {
     "rotate_deg": 10,
     "scale": 0.1,
     "lowres_zoom": [0.5, 1.0],
+    "flip_lr": 0.0,
 }
 
 
@@ -163,6 +164,8 @@ def test_non_positive_value_raises(tmp_path: Path) -> None:
         ("augment", "gamma", [0, 1.5]),
         ("augment", "lowres_zoom", [1.0, 0.5]),
         ("augment", "lowres_zoom", [0.5, 1.5]),
+        ("augment", "flip_lr", -0.1),
+        ("augment", "flip_lr", 1.1),
     ],
 )
 def test_out_of_range_cnn_value_raises(

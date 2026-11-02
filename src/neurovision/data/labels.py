@@ -25,6 +25,22 @@ TARGETS: tuple[str, ...] = (
 LOCATIONS = TARGETS[:13]
 ANEURYSM_PRESENT = TARGETS[13]
 
+
+def _lr_swap() -> tuple[int, ...]:
+    """Column permutation that exchanges each Left X / Right X pair and fixes every other target."""
+    swapped = []
+    for name in TARGETS:
+        if name.startswith("Left "):
+            name = "Right " + name.removeprefix("Left ")
+        elif name.startswith("Right "):
+            name = "Left " + name.removeprefix("Right ")
+        swapped.append(TARGETS.index(name))
+    return tuple(swapped)
+
+
+# Mirroring the head left-right turns a left-sided artery into the right-sided one: `y[LR_SWAP]`.
+LR_SWAP: tuple[int, ...] = _lr_swap()
+
 CORRECTED_SHA256 = "4f32f4aa650d145a37b058fe72fa3a8fc2bce4f2e303474f4b2beb751903a365"
 _COLUMNS = [*TARGETS, "PatientAge", "PatientSex", "Modality"]
 

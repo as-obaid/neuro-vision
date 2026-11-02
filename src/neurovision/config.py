@@ -54,6 +54,7 @@ class AugmentConfig(_Frozen):
     rotate_deg: float = Field(ge=0)
     scale: float = Field(ge=0, lt=1)
     lowres_zoom: tuple[PositiveFloat, PositiveFloat]
+    flip_lr: float = Field(default=0.0, ge=0, le=1)
 
     @model_validator(mode="after")
     def _ranges_are_ordered(self) -> Self:

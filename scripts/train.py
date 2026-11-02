@@ -37,13 +37,16 @@ def _train_cnn(config: Config, fold: int) -> None:
         )
     ok = set(index.index[index["status"] == "ok"])
 
-    def dataset(frame: pd.DataFrame, transform: Compose | None) -> CacheDataset:
+    def dataset(
+        frame: pd.DataFrame, transform: Compose | None, flip_lr: float = 0.0
+    ) -> CacheDataset:
         frame = frame[frame.index.isin(ok)]
-        return CacheDataset(cache, list(frame.index), frame.to_numpy(), transform)
+        return CacheDataset(cache, list(frame.index), frame.to_numpy(), transform, flip_lr)
 
     train, val = labels[folds != fold], labels[folds == fold]
     assert config.augment is not None
-    train_ds, val_ds = dataset(train, build_augment(config.augment)), dataset(val, None)
+    train_ds = dataset(train, build_augment(config.augment), config.augment.flip_lr)
+    val_ds = dataset(val, None)
     counts = {
         "train_used": len(train_ds),
         "train_excluded": len(train) - len(train_ds),

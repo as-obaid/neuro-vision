@@ -163,6 +163,7 @@ def train_loader(
     """Shuffled loader whose order and augmentation streams depend only on `seed + epoch`."""
     if isinstance(ds.transform, Randomizable):
         ds.transform.set_random_state(seed=seed + epoch)  # the num_workers=0 stream
+    ds.set_flip_seed(seed + epoch)
     return DataLoader(
         ds,
         batch_size=cfg.batch_size,
