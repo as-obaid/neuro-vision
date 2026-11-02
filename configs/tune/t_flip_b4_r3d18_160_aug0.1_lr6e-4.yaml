@@ -1,0 +1,3 @@
+extends: t_flip_b4_r3d18_160_aug0.1.yaml
+# Twice the base lr (head 6e-4, backbone 6e-5) on the best run.
+train: {lr: 6.0e-4}
