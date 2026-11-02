@@ -1,0 +1,3 @@
+extends: b2_loss_competition.yaml
+# Underfitting check: without augmentation, can train loss fall below the scan-type floor?
+augment: {prob: 0.0}
