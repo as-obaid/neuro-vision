@@ -1,0 +1,29 @@
+{
+  "config": "b0",
+  "folds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "n": 4348,
+  "score": 0.5,
+  "aucs": {
+    "Left Infraclinoid Internal Carotid Artery": 0.5,
+    "Right Infraclinoid Internal Carotid Artery": 0.5,
+    "Left Supraclinoid Internal Carotid Artery": 0.5,
+    "Right Supraclinoid Internal Carotid Artery": 0.5,
+    "Left Middle Cerebral Artery": 0.5,
+    "Right Middle Cerebral Artery": 0.5,
+    "Anterior Communicating Artery": 0.5,
+    "Left Anterior Cerebral Artery": 0.5,
+    "Right Anterior Cerebral Artery": 0.5,
+    "Left Posterior Communicating Artery": 0.5,
+    "Right Posterior Communicating Artery": 0.5,
+    "Basilar Tip": 0.5,
+    "Other Posterior Circulation": 0.5,
+    "Aneurysm Present": 0.5
+  },
+  "commit": "fda543f9cef897726568376fa3d8dd2e45539709"
+}

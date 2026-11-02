@@ -1,0 +1,6 @@
+n_folds: 5
+seed: 0
+group_key: FrameOfReferenceUID
+labels: corrected
+folds_sha256: af741fade96a22cb4d811bc08f3e1cc80f04d9d1e015de15cfa627c1d3ab13d1
+date: '2026-11-02'
