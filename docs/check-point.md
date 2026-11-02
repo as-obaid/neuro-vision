@@ -97,8 +97,8 @@ Protocol:
 | Data | Fold 0: 3,448 training series, 870 validation series |
 | Length | 10 epochs, cosine schedule, no early stop |
 | Changes | One variable per run against its parent config |
-| Kept if | Best score at least parent + 0.010, and the final-epoch score also higher |
-| Hardware | One L40S per run, about 26 minutes |
+| Kept if | Best score at least parent + 0.010, and the final-epoch score also higher. Round 3 (lean plan, user): smaller gains are stacked; the stack is judged as a whole |
+| Hardware | One GPU per run, mostly L40S: 18-55 minutes |
 
 **Round 1: what stops B2 from learning?** All runs use the 30-epoch schedule and are compared at epoch 9.
 
@@ -147,7 +147,43 @@ Findings:
   Uniform BCE stays.
 - **Post-processing dropped:** multiplying each location by the Aneurysm Present probability gained +0.006 on
   the reference but +0.002 on the flip run.
-- **Running:** 160³ input on the flip run (cache build in progress).
+
+**Round 3: backbone, input size, learning rate.** All runs keep the flip at batch 4 x 2 (effective 8, so 160³
+fits on one card). Gain is against the parent in brackets. Source: `history.csv`.
+
+| Run (parent) | Change | Best (epoch) | Final | Gain best / final | Decision |
+|:--|:--|--:|--:|--:|:--|
+| Control (flip run) | Batch 4 x 2 | 0.684 (8) | 0.682 | -0.002 / 0.000 | Reference |
+| ResNet-34 (control) | Deeper ImageNet ResNet | 0.690 (8) | 0.688 | +0.006 / +0.006 | Small |
+| ResNet-50 (control) | Deeper; 1.9 x the epoch time | 0.688 (8) | 0.687 | +0.004 / +0.005 | Small |
+| r3d_18 (control) | Video ResNet-18 with Kinetics-400 weights | 0.698 (9) | 0.698 | +0.014 / +0.016 | **Kept** |
+| 160³ (control) | Whole scan resized to 160³ | 0.690 (9) | 0.690 | +0.006 / +0.008 | Kept |
+| r3d_18 160³ (r3d_18) | 160³ | 0.703 (9) | 0.703 | +0.005 / +0.005 | Kept |
+| + aug 0.1 (r3d_18 160³) | Augmentation probability 0.2 to 0.1 | 0.705 (9) | 0.705 | +0.002 / +0.002 | Kept |
+| Fix 1 (r3d_18 160³) | 1 mm head crop (below) | 0.704 (7) | 0.703 | +0.001 / 0.000 | Level |
+| Fix 1 + aug 0.1 (fix 1) | Augmentation probability 0.1 | 0.702 (7) | 0.699 | -0.002 / -0.004 | Lower |
+| **Fix 1 + aug 0.1 + lr x 2** (fix 1 + aug 0.1) | lr 6e-4 head, 6e-5 backbone | **0.711 (7)** | **0.708** | **+0.009 / +0.009** | **Best run** |
+| r3d_18 160³ + aug 0.1 + lr x 2 (+ aug 0.1) | lr x 2 without fix 1 | running, ends about 16:20 | | | |
+| Best + batch 16 (best run) | Batch 16 x 1, lr 1.2e-3 (two changes) | running, ends about 16:35 | | | |
+| MLP head (ResNet-34; r3d_18; r3d_18 + aug 0.1) | 512-256-14 MLP: LayerNorm, ReLU, dropout 0.1 | 0.679; 0.693; 0.691 | | -0.011; -0.005; -0.010 | Dropped |
+| Aug 0.1 (ResNet-34; r3d_18) | Augmentation probability 0.1 | 0.694; 0.701 | 0.691; 0.700 | +0.004 / +0.003; +0.003 / +0.002 | Small |
+
+**Audit** (read-only, 11:50). No bug found (about 85% confident): metric, label order, flip pairs, folds and
+EMA check out. Main suspect: the cube resize ignores voxel spacing. Ceiling for this design: about 0.70-0.72.
+**Fix 1** resamples to 1 mm and cuts a 160 mm box on the head (Otsu mask), so the neck and table drop out of CTA.
+
+Findings (round 3):
+
+- **Starting weights matter most.** Kinetics video weights beat every ImageNet ResNet; depth adds only +0.004
+  to +0.006. r3d_18 also has its own stem and no random-init run, so its weights and layout are not separated.
+- **160³ helps late:** within 0.003 of 128³ at epochs 3-5 on both backbones, ahead from epoch 6.
+- **Fix 1 learns faster, then ends level:** +0.010 to +0.013 at epoch 0. At lr 3e-4 and 10 epochs, the cube
+  resize is not confirmed as the limit.
+- **Twice the learning rate lifts the late epochs:** +0.001 to +0.002 at epochs 2-4, +0.009 at epochs 7-9.
+  Old-rate r3d_18 runs end with flat validation loss (training loss 0.15-0.17), which suggests that 10 epochs
+  at lr 3e-4 under-train. Over the best old-rate run: +0.006 / +0.003.
+- **No gain:** the MLP head (slow start: 0.53 vs 0.56-0.57 at epoch 0); aug 0.1 (sign mixed, noise level).
+- **In total:** +0.027 best, +0.026 final over the control. Only r3d_18 cleared 0.010 alone.
 
 ## 5 Behaviour analysis
 
@@ -194,34 +230,40 @@ the arteries.
 
 ## 6 Stage 3 direction
 
-| Finding (section 5) | What it implies |
+| Finding | What it implies |
 |:--|:--|
-| The model finds aneurysms on CTA and MRA | The pipeline works; the input limits it |
-| Locations stay weak (0.648); MRA locations near chance | The arteries need finer detail |
-| 1.8 mm voxels over a 230 mm field of view | The whole-head 128³ input spends most voxels on non-arteries |
-| Regularization and loss changes do nothing | More tuning of the whole-head model has low value |
+| The model finds aneurysms on CTA and MRA (section 5) | The pipeline works |
+| Starting weights gave the largest gains (section 4) | The start point matters more than loss, head or regularization |
+| 160³ and the 1 mm head crop add 0.005 or less at the final epoch | Finer whole-head input alone is not enough |
+| Audit ceiling about 0.70-0.72; best run 0.711 | More tuning of the whole-scan classifier has low value |
+| Locations stay weak (0.648 on the flip run; MRA near chance) | The model needs a signal for where the arteries are |
 
-**Direction: arm A, box crop (proposal Section 5).** A 2D detector (YOLOv8n) on sagittal and coronal MIPs
-finds the vessel region. The classifier then reads that box at 160³, with finer voxels on the arteries.
-It uses the same folds, trainer and scorer. Arm B stays a stretch goal.
+Direction:
+
+1. **Finish B2.** Pick the final config once the two running runs end. Train it on folds 1-4, report the
+   5-fold mean, and ensemble the 5 fold models for Kaggle.
+2. **Stage 3: arm A (proposal Section 5).** A 2D detector (YOLOv8n) on sagittal and coronal MIPs finds the
+   vessel region. The classifier reads it with finer voxels than the 1 mm head crop. Candidate addition, not
+   in the proposal: the competition's aneurysm localizer points as extra training targets. Arm B stays a
+   stretch goal.
 
 Gates before Stage 3:
 
-1. Confirm the flip run on folds 1-4. The project rule keeps a fold-0 gain only if 5 folds confirm it.
-2. Finish the 160³ whole-head run. A gain there would support the resolution case for arm A.
-3. Run seeds 1 and 2 of the final B2 to measure the seed spread.
+1. Confirm the final config on folds 1-4. The project rule keeps a fold-0 gain only if 5 folds confirm it.
+2. Run seeds 1 and 2 of the final config to measure the seed spread.
+3. Score its `oof.csv` and repeat section 5.
 
-Compute so far: about 9 GPU-hours for 21 fold-0 runs, mostly L40S (`history.csv` timings). One 5-fold
-B2 run costs about 2.2 L40S-hours, well inside the proposal's budget.
+Compute so far: about 18 GPU-hours for 36 fold-0 runs, mostly L40S (`history.csv` timings). One 5-fold run of
+the best config costs about 4 L40S-hours, well inside the proposal's budget.
 
 ## 7 Limitations
 
 | Limit | Effect |
 |:--|:--|
-| Fold 0 only | Stage 2 gains are not yet confirmed on 5 folds. |
-| One seed per run | Seed spread is unmeasured; a single-run gain under about 0.02 may be noise. |
-| Best epoch chosen on the scored fold | Scores are slightly optimistic, equally for every run. |
-| 10-epoch protocol | Favors fast learners; the random-init control was still rising at epoch 9. |
+| Fold 0 only | Stage 2 gains, the 0.711 best run included, are not yet confirmed on 5 folds. |
+| One seed per run | Seed spread is unmeasured. The paired bootstrap's 95% CI for two related runs spans about ±0.010 (flip vs reference), so most round 3 steps (0.002-0.006) are within noise. |
+| Config and epoch chosen on the scored fold | 36 runs share one validation set, so the best score is optimistic. |
+| 10-epoch protocol | Favors fast learners (random init still rising at epoch 9); the lr x 2 gain suggests the old rate under-trains. Longer schedules are untested. |
 | Bootstrap covers validation sampling only | It ignores seed noise and epoch selection. |
 | 37 series fail preprocessing | They get the label prior (7 in fold 0). `history.csv` scores skip them and read up to 0.003 higher than `oof.csv`. |
 | No patient key | The same patient across different visits cannot be linked. |
