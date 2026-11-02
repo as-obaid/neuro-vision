@@ -163,7 +163,7 @@ fits on one card). Gain is against the parent in brackets. Source: `history.csv`
 | Fix 1 (r3d_18 160³) | 1 mm head crop (below) | 0.704 (7) | 0.703 | +0.001 / 0.000 | Level |
 | Fix 1 + aug 0.1 (fix 1) | Augmentation probability 0.1 | 0.702 (7) | 0.699 | -0.002 / -0.004 | Lower |
 | **Fix 1 + aug 0.1 + lr x 2** (fix 1 + aug 0.1) | lr 6e-4 head, 6e-5 backbone | **0.711 (7)** | **0.708** | **+0.009 / +0.009** | **Best run** |
-| r3d_18 160³ + aug 0.1 + lr x 2 (+ aug 0.1) | lr x 2 without fix 1 | running, ends about 16:20 | | | |
+| r3d_18 160³ + aug 0.1 + lr x 2 (+ aug 0.1) | lr x 2 without fix 1 | 0.701 (9) | 0.701 | -0.004 / -0.004 | Lower |
 | Best + batch 16 (best run) | Batch 16 x 1, lr 1.2e-3 (two changes) | stopped after epoch 2 | | -0.022 to -0.012 at epochs 0-2 | Dropped |
 | MLP head (ResNet-34; r3d_18; r3d_18 + aug 0.1) | 512-256-14 MLP: LayerNorm, ReLU, dropout 0.1 | 0.679; 0.693; 0.691 | | -0.011; -0.005; -0.010 | Dropped |
 | Aug 0.1 (ResNet-34; r3d_18) | Augmentation probability 0.1 | 0.694; 0.701 | 0.691; 0.700 | +0.004 / +0.003; +0.003 / +0.002 | Small |
@@ -179,9 +179,9 @@ Findings (round 3):
 - **160³ helps late:** within 0.003 of 128³ at epochs 3-5 on both backbones, ahead from epoch 6.
 - **Fix 1 learns faster, then ends level:** +0.010 to +0.013 at epoch 0. At lr 3e-4 and 10 epochs, the cube
   resize is not confirmed as the limit.
-- **Twice the learning rate lifts the late epochs:** +0.001 to +0.002 at epochs 2-4, +0.009 at epochs 7-9.
-  Old-rate r3d_18 runs end with flat validation loss (training loss 0.15-0.17), which suggests that 10 epochs
-  at lr 3e-4 under-train. Over the best old-rate run: +0.006 / +0.003.
+- **Twice the learning rate helped only on the head crop:** +0.009 at epochs 7-9 with fix 1, but -0.004 on
+  the resized cube. One fold and one seed each, so the split may be noise. Over the best old-rate run:
+  +0.006 / +0.003.
 - **No gain:** the MLP head (slow start: 0.53 vs 0.56-0.57 at epoch 0); aug 0.1 (sign mixed, noise level).
 - **In total:** +0.027 best, +0.026 final over the control. Only r3d_18 cleared 0.010 alone.
 
@@ -265,7 +265,7 @@ the best config costs about 4 L40S-hours, well inside the proposal's budget.
 | Fold 0 only | Stage 2 gains, the 0.711 best run included, are not yet confirmed on 5 folds. |
 | One seed per run | Seed spread is unmeasured. The paired bootstrap's 95% CI for two related runs spans about ±0.010 (flip vs reference), so most round 3 steps (0.002-0.006) are within noise. |
 | Config and epoch chosen on the scored fold | 36 runs share one validation set, so the best score is optimistic. |
-| 10-epoch protocol | Favors fast learners (random init still rising at epoch 9); the lr x 2 gain suggests the old rate under-trains. Longer schedules are untested. |
+| 10-epoch protocol | Favors fast learners (random init still rising at epoch 9); lr x 2 helped on the head crop and not on the cube. The 30-epoch schedule of the final config is queued (5 folds, from Nov 4). |
 | Bootstrap covers validation sampling only | It ignores seed noise and epoch selection. |
 | 37 series fail preprocessing | They get the label prior (7 in fold 0). `history.csv` scores skip them and read up to 0.003 higher than `oof.csv`. |
 | No patient key | The same patient across different visits cannot be linked. |
