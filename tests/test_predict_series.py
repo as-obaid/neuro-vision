@@ -50,3 +50,17 @@ def test_corrupt_file_gives_a_float32_prior_copy_and_one_warning(
     assert [r.levelname for r in caplog.records] == ["WARNING"]
     assert "InvalidDicomError" in caplog.text
     assert str(tmp_path) not in caplog.text
+
+
+def test_series_volume_uses_the_requested_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from neurovision.infer import predict
+
+    write_series(tmp_path / "s", **KW)
+    shapes: list[tuple[int, ...]] = []
+    model = _model()
+    model.register_forward_hook(lambda _m, args, _o: shapes.append(tuple(args[0].shape)))
+    predict.predict_series(tmp_path / "s", model, PRIOR, size=24)
+    predict.predict_series(tmp_path / "s", model, PRIOR)
+    assert shapes == [(1, 1, 24, 24, 24), (1, 1, 128, 128, 128)]

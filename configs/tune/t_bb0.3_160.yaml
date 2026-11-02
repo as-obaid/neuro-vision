@@ -1,0 +1,3 @@
+extends: t_bb0.3.yaml
+# 160-cubed input: an aneurysm is 2-5 voxels at 128-cubed; 160 gives voxels about 1.25x finer.
+train: {input_size: 160}

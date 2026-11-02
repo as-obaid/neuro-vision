@@ -23,7 +23,7 @@ def cnn_labels() -> pd.DataFrame:
     )
 
 
-def write_store(root: Path) -> None:
+def write_store(root: Path, cache_name: str = "b2-128") -> None:
     """Write folds and cache under `root`.
 
     Fold 0 validates on s0000 (positive) and s0005 (negative), with s0010 excluded; it trains on
@@ -33,7 +33,7 @@ def write_store(root: Path) -> None:
     FOLDS.rename("fold").to_csv(root / "folds" / "folds.csv")
     sha = hashlib.sha256((root / "folds" / "folds.csv").read_bytes()).hexdigest()
     (root / "folds" / "folds.yaml").write_text(f"folds_sha256: {sha}\n")
-    cache = root / "cache" / "b2-128"
+    cache = root / "cache" / cache_name
     cache.mkdir(parents=True)
     rng = np.random.default_rng(0)
     for uid in UIDS:
@@ -59,6 +59,7 @@ def write_config(
     init: str = "random",
     freeze_epochs: int = 0,
     backbone_lr_scale: float = 1.0,
+    input_size: int = 128,
 ) -> Path:
     patience = "null" if early_stop_patience is None else early_stop_patience
     path.write_text(
@@ -67,7 +68,7 @@ def write_config(
         f" weight_decay: 0.01, warmup_epochs: 1, ema_decay: 0.9, loss_weights: {loss_weights},"
         f" num_workers: {num_workers}, early_stop_patience: {patience},"
         f" pos_weight: {pos_weight}, init: {init}, freeze_epochs: {freeze_epochs},"
-        f" backbone_lr_scale: {backbone_lr_scale}}}\n"
+        f" backbone_lr_scale: {backbone_lr_scale}, input_size: {input_size}}}\n"
         f"augment: {{prob: {prob}, noise_std: 0.1, gamma: [0.7, 1.5], rotate_deg: 10,"
         " scale: 0.1, lowres_zoom: [0.5, 1.0]}\n"
     )

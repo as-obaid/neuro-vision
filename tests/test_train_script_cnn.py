@@ -75,6 +75,20 @@ def test_series_missing_from_the_index_are_refused(setup) -> None:
     assert not (store / "runs").exists()
 
 
+def test_input_size_selects_the_cache_folder(setup, tmp_path: Path) -> None:
+    train, _, store, _ = setup
+    config = str(write_config(tmp_path / "b2_160.yaml", input_size=160))
+    (store / "cache" / "b2-128").rename(store / "cache" / "b2-160")
+    index_path = store / "cache" / "b2-160" / "index.csv"
+    index = pd.read_csv(index_path)
+    index.iloc[1:].to_csv(index_path, index=False)
+    with pytest.raises(SystemExit, match=r"cache/b2-160/index.csv.*--size 160"):
+        train.main([config, "--fold", "0"])
+    index.to_csv(index_path, index=False)
+    train.main([config, "--fold", "0"])
+    assert (store / "runs" / "b2_160" / "fold0" / "oof.csv").exists()
+
+
 def test_counts_are_printed_and_stored(setup, capsys: pytest.CaptureFixture[str]) -> None:
     train, _, store, config = setup
     train.main([config, "--fold", "0"])

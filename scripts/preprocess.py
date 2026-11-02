@@ -1,4 +1,6 @@
-"""Cache every training series as a 128-cubed volume under $NV_STORE/cache/b2-128.
+"""Cache every training series as a cubic volume under $NV_STORE/cache/b2-{size}.
+
+--size sets the edge length (default 128); each size has its own folder and index.csv.
 
 Resumable: series already in index.csv are skipped, except rows whose reason starts with
 "error:" (transient failures), which are retried. Prints counts and timings only.
@@ -20,7 +22,12 @@ import pandas as pd
 import torch
 
 from neurovision.data.dataset import load_index
-from neurovision.data.preprocess import ERROR_PREFIX, GeometryError, preprocess_with_geometry
+from neurovision.data.preprocess import (
+    ERROR_PREFIX,
+    SIZE,
+    GeometryError,
+    preprocess_with_geometry,
+)
 from neurovision.paths import atomic_write, require_unzipped, store
 
 COLUMNS = (
@@ -48,11 +55,11 @@ def _save_npy(path: Path, volume: np.ndarray) -> None:
         np.save(handle, volume)
 
 
-def process(uid: str, series_dir: Path, cache: Path) -> dict[str, object]:
+def process(uid: str, series_dir: Path, cache: Path, size: int = SIZE) -> dict[str, object]:
     row: dict[str, object] = {"SeriesInstanceUID": uid}
     start = time.perf_counter()
     try:
-        volume, geometry = preprocess_with_geometry(series_dir)
+        volume, geometry = preprocess_with_geometry(series_dir, size)
     except GeometryError as error:
         row.update(status="excluded", reason=str(error))
     except Exception as error:  # one bad series must not stop a 10-hour run
@@ -94,7 +101,9 @@ def _died(uid: str) -> dict[str, object]:
     return {"SeriesInstanceUID": uid, "status": "excluded", "reason": f"{ERROR_PREFIX} worker died"}
 
 
-def _run(todo: Sequence[str], root: Path, cache: Path, workers: int, handle: TextIO) -> None:
+def _run(
+    todo: Sequence[str], root: Path, cache: Path, workers: int, handle: TextIO, size: int = SIZE
+) -> None:
     # At most `workers` series in flight, so a dead worker taints few series; they are retried
     # on the next run.
     writer = csv.DictWriter(handle, COLUMNS)
@@ -111,7 +120,9 @@ def _run(todo: Sequence[str], root: Path, cache: Path, workers: int, handle: Tex
                 while pending or inflight:
                     while pending and len(inflight) < workers:
                         uid = pending.popleft()
-                        future = pool.submit(process, uid, root / "raw" / "series" / uid, cache)
+                        future = pool.submit(
+                            process, uid, root / "raw" / "series" / uid, cache, size
+                        )
                         inflight[future] = uid
                     finished, _ = wait(inflight, return_when=FIRST_COMPLETED)
                     for future in finished:
@@ -124,10 +135,12 @@ def _run(todo: Sequence[str], root: Path, cache: Path, workers: int, handle: Tex
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--size", type=int, default=SIZE, help="edge length in voxels")
+    size = parser.parse_args(argv).size
     root = store()
     require_unzipped(root)
-    cache = root / "cache" / "b2-128"
+    cache = root / "cache" / f"b2-{size}"
     cache.mkdir(parents=True, exist_ok=True)
     index = cache / "index.csv"
     done = {row["SeriesInstanceUID"] for row in _load_index(index)}
@@ -135,7 +148,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     todo = [u for u in uids["SeriesInstanceUID"] if u not in done]
     workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
     with index.open("a", newline="") as handle:
-        _run(todo, root, cache, workers, handle)
+        _run(todo, root, cache, workers, handle, size)
     table = load_index(cache)
     reasons = Counter(table.loc[table["status"] == "excluded", "reason"])
     print(f"ok {(table['status'] == 'ok').sum()}, excluded {sum(reasons.values())}")

@@ -27,13 +27,14 @@ def _train_cnn(config: Config, fold: int) -> None:
     if fold not in set(folds):
         raise SystemExit(f"fold {fold} is not in folds.csv")
     labels = load_labels(root, config.labels).loc[folds.index, list(TARGETS)]
-    cache = root / "cache" / "b2-128"
+    assert config.train is not None
+    cache = root / "cache" / f"b2-{config.train.input_size}"
     index = load_index(cache)
     missing = len(folds.index.difference(index.index))
     if missing:
         raise SystemExit(
-            f"{missing} of {len(folds)} series have no row in cache/b2-128/index.csv; "
-            "rerun slurm/preprocess.sbatch"
+            f"{missing} of {len(folds)} series have no row in {cache.relative_to(root)}/index.csv; "
+            f"rerun slurm/preprocess.sbatch --size {config.train.input_size}"
         )
     ok = set(index.index[index["status"] == "ok"])
 

@@ -37,6 +37,8 @@ class TrainConfig(_Frozen):
     freeze_epochs: int = Field(default=0, ge=0)
     # every layer but the head trains at lr x this
     backbone_lr_scale: float = Field(default=1.0, gt=0, le=1)
+    # edge length of the cached cube the model trains on: reads cache/b2-{input_size}
+    input_size: Literal[128, 160] = 128
 
     @model_validator(mode="after")
     def _warmup_fits_in_training(self) -> Self:

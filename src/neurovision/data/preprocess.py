@@ -1,4 +1,4 @@
-"""DICOM series to a float16 128-cubed RAS+ volume: the only DICOM-to-volume path."""
+"""DICOM series to a float16 cubic RAS+ volume (128 by default): the only DICOM-to-volume path."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -150,10 +150,10 @@ def series_geometry(datasets: Sequence[Dataset]) -> Geometry:
     )
 
 
-def antialias(volume: torch.Tensor) -> torch.Tensor:
-    """Gaussian-blur each axis that the resize to SIZE downsamples (sigma as in scikit-image)."""
+def antialias(volume: torch.Tensor, size: int = SIZE) -> torch.Tensor:
+    """Gaussian-blur each axis that the resize to `size` downsamples (sigma as in scikit-image)."""
     for axis, n in enumerate(volume.shape):
-        zoom = SIZE / n
+        zoom = size / n
         if zoom >= 1:
             continue
         sigma = (1 / zoom - 1) / 2
@@ -168,10 +168,10 @@ def antialias(volume: torch.Tensor) -> torch.Tensor:
     return volume
 
 
-def resample(volume: np.ndarray) -> np.ndarray:
-    blurred = antialias(torch.from_numpy(volume))
+def resample(volume: np.ndarray, size: int = SIZE) -> np.ndarray:
+    blurred = antialias(torch.from_numpy(volume), size)
     return functional.interpolate(
-        blurred[None, None], size=(SIZE, SIZE, SIZE), mode="trilinear", align_corners=False
+        blurred[None, None], size=(size, size, size), mode="trilinear", align_corners=False
     )[0, 0].numpy()
 
 
@@ -187,7 +187,7 @@ def _slices(ds: Dataset) -> np.ndarray:
     return -pixels if ds.PhotometricInterpretation == "MONOCHROME1" else pixels
 
 
-def preprocess_with_geometry(series_dir: Path) -> tuple[np.ndarray, Geometry]:
+def preprocess_with_geometry(series_dir: Path, size: int = SIZE) -> tuple[np.ndarray, Geometry]:
     datasets = read_series(series_dir)
     geometry = series_geometry(datasets)
     stack = np.concatenate([_slices(ds) for ds in datasets])
@@ -201,12 +201,12 @@ def preprocess_with_geometry(series_dir: Path) -> tuple[np.ndarray, Geometry]:
     ras = orientations.apply_orientation(
         stack.transpose(2, 1, 0), orientations.io_orientation(affine)
     )
-    resampled = resample(np.ascontiguousarray(ras))
+    resampled = resample(np.ascontiguousarray(ras), size)
     low, high = np.percentile(resampled, [0.5, 99.5])
     clipped = np.clip(resampled, low, high)
     z = (clipped - clipped.mean()) / max(float(clipped.std()), 1e-6)
     return np.ascontiguousarray(z, dtype=np.float16), geometry
 
 
-def preprocess_series(series_dir: Path) -> np.ndarray:
-    return preprocess_with_geometry(series_dir)[0]
+def preprocess_series(series_dir: Path, size: int = SIZE) -> np.ndarray:
+    return preprocess_with_geometry(series_dir, size)[0]

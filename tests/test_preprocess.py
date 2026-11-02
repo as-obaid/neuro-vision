@@ -13,6 +13,7 @@ import torch
 
 from neurovision.data.dicom import read_header
 from neurovision.data.preprocess import (
+    SIZE,
     GeometryError,
     antialias,
     preprocess_series,
@@ -452,3 +453,36 @@ def test_dead_worker_marks_series_and_the_run_continues(
     assert table.loc["1.2.3", "status"] == "ok"
     assert KillingPool.created >= 2
     assert "ok 2, excluded 1" in capsys.readouterr().out
+
+
+def test_default_size_is_128() -> None:
+    assert SIZE == 128
+
+
+@pytest.mark.parametrize("size", [16, 24])
+def test_resample_follows_the_size_argument(size: int) -> None:
+    volume = np.random.default_rng(0).normal(size=(40, 30, 50)).astype(np.float32)
+    assert resample(volume, size).shape == (size, size, size)
+
+
+def test_antialias_sigma_follows_the_size_argument() -> None:
+    volume = torch.rand(48, 8, 8)
+    assert not torch.allclose(antialias(volume, 16), antialias(volume, 24), atol=1e-4)
+    assert torch.equal(antialias(volume, 48), volume)
+
+
+def test_series_volume_follows_the_size_argument(tmp_path: Path) -> None:
+    write_series(tmp_path / "s", **KW)
+    assert preprocess_series(tmp_path / "s", 24).shape == (24, 24, 24)
+    assert preprocess_with_geometry(tmp_path / "s", 16)[0].shape == (16, 16, 16)
+
+
+def test_script_cache_folder_follows_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    make_raw(tmp_path, ["1.2.1"])
+    monkeypatch.setenv("NV_STORE", str(tmp_path))
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "1")
+    script = import_script("preprocess", monkeypatch)
+    script.main(["--size", "16"])
+    cache = tmp_path / "cache" / "b2-16"
+    assert np.load(cache / "1.2.1.npy").shape == (16, 16, 16)
+    assert not (tmp_path / "cache" / "b2-128").exists()

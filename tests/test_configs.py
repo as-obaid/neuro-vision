@@ -25,6 +25,7 @@ TRAIN = {
     "init": "random",
     "freeze_epochs": 0,
     "backbone_lr_scale": 1.0,
+    "input_size": 128,
 }
 AUGMENT = {
     "prob": 0.2,
@@ -278,3 +279,24 @@ def test_one_variable_check_fails_for_no_change(tmp_path: Path) -> None:
     write(tmp_path / "c.yaml", {"extends": "p.yaml"})
     with pytest.raises(AssertionError):
         check_one_variable(tmp_path / "c.yaml")
+
+
+def test_input_size_defaults_to_128_and_rejects_unsupported_values(tmp_path: Path) -> None:
+    train = {k: v for k, v in TRAIN.items() if k != "input_size"}
+    body = {"kind": "cnn", "seed": 0, "labels": "corrected", "augment": AUGMENT}
+    write(tmp_path / "x.yaml", {**body, "train": train})
+    cfg = load_config(tmp_path / "x.yaml")
+    assert cfg.train is not None and cfg.train.input_size == 128
+    write(tmp_path / "y.yaml", {**body, "train": {**train, "input_size": 160}})
+    cfg = load_config(tmp_path / "y.yaml")
+    assert cfg.train is not None and cfg.train.input_size == 160
+    write(tmp_path / "z.yaml", {**body, "train": {**train, "input_size": 100}})
+    with pytest.raises(ValidationError):
+        load_config(tmp_path / "z.yaml")
+
+
+def test_t_bb0_3_160_changes_only_the_input_size() -> None:
+    diff = changed_leaves(
+        resolve(CONFIGS / "tune" / "t_bb0.3_160.yaml"), resolve(CONFIGS / "tune" / "t_bb0.3.yaml")
+    )
+    assert diff == {"train.input_size"}
