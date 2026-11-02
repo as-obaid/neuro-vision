@@ -27,6 +27,7 @@ TRAIN = {
     "freeze_epochs": 0,
     "backbone_lr_scale": 1.0,
     "input_size": 128,
+    "head": "linear",
 }
 AUGMENT = {
     "prob": 0.2,
@@ -337,3 +338,29 @@ def test_init_must_fit_the_backbone() -> None:
         train = {**TRAIN, "backbone": backbone, "init": init}
         with pytest.raises(ValueError, match="needs"):
             Config.model_validate({"kind": "cnn", "train": train})
+
+
+def test_head_defaults_to_linear_and_accepts_mlp(tmp_path: Path) -> None:
+    train = {k: v for k, v in TRAIN.items() if k != "head"}
+    body = {"kind": "cnn", "seed": 0, "labels": "corrected", "augment": AUGMENT}
+    write(tmp_path / "x.yaml", {**body, "train": train})
+    cfg = load_config(tmp_path / "x.yaml")
+    assert cfg.train is not None and cfg.train.head == "linear"
+    write(tmp_path / "y.yaml", {**body, "train": {**train, "head": "mlp"}})
+    cfg = load_config(tmp_path / "y.yaml")
+    assert cfg.train is not None and cfg.train.head == "mlp"
+    write(tmp_path / "z.yaml", {**body, "train": {**train, "head": "deep"}})
+    with pytest.raises(ValidationError):
+        load_config(tmp_path / "z.yaml")
+
+
+def test_mlp_head_config_changes_only_the_head() -> None:
+    assert _tune_diff("t_flip_b4_r34_mlp.yaml", "t_flip_b4_r34.yaml") == {"train.head"}
+    cfg = load_config(CONFIGS / "tune" / "t_flip_b4_r34_mlp.yaml")
+    assert cfg.train is not None and (cfg.train.backbone, cfg.train.head) == ("resnet34", "mlp")
+
+
+def test_half_augmentation_config_changes_only_the_probability() -> None:
+    assert _tune_diff("t_flip_b4_r34_aug0.1.yaml", "t_flip_b4_r34.yaml") == {"augment.prob"}
+    cfg = load_config(CONFIGS / "tune" / "t_flip_b4_r34_aug0.1.yaml")
+    assert cfg.augment is not None and cfg.augment.prob == 0.1

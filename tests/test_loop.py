@@ -221,3 +221,15 @@ def test_param_groups_at_scale_one_is_one_group() -> None:
     model = build_model()
     (group,) = param_groups(model, 3e-4, 1.0)
     assert len(group["params"]) == len(list(model.parameters()))
+
+
+def test_param_groups_put_every_mlp_head_parameter_and_only_those_in_the_head_group() -> None:
+    model = build_model(head="mlp")
+    head, rest = param_groups(model, 3e-4, 0.1)
+    named = dict(model.named_parameters())
+    assert {id(p) for p in head["params"]} == {
+        id(p) for n, p in named.items() if n.startswith("fc.")
+    }
+    assert len(head["params"]) == 6  # two Linear layers and a LayerNorm, weight and bias each
+    assert not {id(p) for p in head["params"]} & {id(p) for p in rest["params"]}
+    assert len(head["params"]) + len(rest["params"]) == len(named)

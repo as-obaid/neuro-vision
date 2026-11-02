@@ -33,11 +33,17 @@ WEIGHTS = {
 Backbone = Literal["resnet18", "resnet34", "resnet50", "r3d18"]
 Init = Literal["random", "imagenet", "kinetics"]
 _MONAI = {"resnet18": resnet18, "resnet34": resnet34, "resnet50": resnet50}
+Head = Literal["linear", "mlp"]
 N_CLASSES = 14
+MLP_HIDDEN = 256
+MLP_DROPOUT = 0.1
 
 
 def build_model(
-    backbone: Backbone = "resnet18", init: Init = "random", weights_dir: Path | None = None
+    backbone: Backbone = "resnet18",
+    init: Init = "random",
+    weights_dir: Path | None = None,
+    head: Head = "linear",
 ) -> nn.Module:
     if init == "imagenet" and backbone not in _MONAI:
         raise ValueError(f"imagenet init needs a resnet backbone, not {backbone}")
@@ -46,12 +52,26 @@ def build_model(
     if init != "random" and weights_dir is None:
         raise ValueError(f"{init} init needs the weights folder")
     model = _r3d18() if backbone == "r3d18" else _resnet(backbone)
+    if head == "mlp":  # random like the linear head; the weight loaders skip every HEAD key
+        fc = model.fc
+        assert isinstance(fc, nn.Linear)
+        model.fc = _mlp_head(fc.in_features)
     if init != "random":
         assert weights_dir is not None
         name, sha = WEIGHTS[backbone]
         state = read_weights(weights_dir / name, sha)
         (load_kinetics if init == "kinetics" else load_imagenet)(model, state)
     return model
+
+
+def _mlp_head(features: int) -> nn.Module:
+    return nn.Sequential(
+        nn.Linear(features, MLP_HIDDEN),
+        nn.LayerNorm(MLP_HIDDEN),
+        nn.ReLU(inplace=True),
+        nn.Dropout(MLP_DROPOUT),
+        nn.Linear(MLP_HIDDEN, N_CLASSES),
+    )
 
 
 def _resnet(backbone: str) -> nn.Module:
@@ -93,7 +113,7 @@ def load_kinetics(model: nn.Module, weights: Mapping[str, torch.Tensor]) -> None
     state = {k: v for k, v in weights.items() if not k.startswith(HEAD)}
     state["stem.0.weight"] = state["stem.0.weight"].sum(dim=1, keepdim=True)
     missing, unexpected = model.load_state_dict(state, strict=False)
-    wrong = (set(missing) - {f"{HEAD}weight", f"{HEAD}bias"}) | set(unexpected)
+    wrong = {k for k in missing if not k.startswith(HEAD)} | set(unexpected)
     if wrong:
         raise ValueError(f"Kinetics weights do not fit the model: {sorted(wrong)}")
 
@@ -121,7 +141,7 @@ def load_imagenet(model: nn.Module, weights_2d: Mapping[str, torch.Tensor]) -> N
     """Every layer but the head from ImageNet; the shortcut-conv biases torchvision lacks are 0."""
     biases = {name for name in model.state_dict() if name.endswith("downsample.0.bias")}
     missing, unexpected = model.load_state_dict(inflate(weights_2d), strict=False)
-    wrong = (set(missing) - biases - {f"{HEAD}weight", f"{HEAD}bias"}) | set(unexpected)
+    wrong = {k for k in missing if k not in biases and not k.startswith(HEAD)} | set(unexpected)
     if wrong:
         raise ValueError(f"ImageNet weights do not fit the model: {sorted(wrong)}")
     with torch.no_grad():

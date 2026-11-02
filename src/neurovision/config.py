@@ -41,6 +41,8 @@ class TrainConfig(_Frozen):
     backbone_lr_scale: float = Field(default=1.0, gt=0, le=1)
     # edge length of the cached cube the model trains on: reads cache/b2-{input_size}
     input_size: Literal[128, 160] = 128
+    # "mlp": 512 -> 256 -> 14 with LayerNorm, ReLU and dropout, random start; "linear": one layer
+    head: Literal["linear", "mlp"] = "linear"
 
     @model_validator(mode="after")
     def _warmup_fits_in_training(self) -> Self:

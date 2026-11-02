@@ -253,3 +253,73 @@ def test_r3d18_builds_with_a_one_channel_stem_and_a_14_way_head() -> None:
     model = build_model("r3d18")
     assert model.stem[0].weight.shape == (64, 1, 3, 7, 7)
     assert model.fc.weight.shape == (14, 512)
+
+
+@pytest.mark.parametrize("backbone", BACKBONES)
+def test_mlp_head_maps_a_small_cube_to_14_logits_under_fc(backbone: str) -> None:
+    _tv(backbone)
+    model = build_model(backbone, head="mlp").eval()  # type: ignore[arg-type]
+    with torch.no_grad():
+        assert model(torch.zeros(1, 1, 32, 32, 32)).shape == (1, 14)
+    head = [n for n, _ in model.named_parameters() if n.startswith(HEAD)]
+    assert len(head) == 6
+    assert all(n.startswith("fc.") for n in head)
+    assert model.fc[0].out_features == resnet3d.MLP_HIDDEN
+    assert model.fc[3].p == resnet3d.MLP_DROPOUT
+
+
+def test_the_default_head_is_the_single_linear_layer() -> None:
+    assert isinstance(build_model().fc, torch.nn.Linear)
+    assert list(build_model().state_dict()) == list(build_model(head="linear").state_dict())
+
+
+@pytest.mark.parametrize("backbone", ["resnet18", "resnet34", "resnet50"])
+def test_load_imagenet_with_the_mlp_head_fills_every_backbone_layer(backbone: str) -> None:
+    torch.manual_seed(0)
+    model = build_model(backbone, head="mlp")  # type: ignore[arg-type]
+    head = {k: v.clone() for k, v in model.state_dict().items() if k.startswith(HEAD)}
+    weights = _imagenet_like(backbone)
+    load_imagenet(model, weights)
+    state = model.state_dict()
+    for name, value in head.items():
+        torch.testing.assert_close(state[name], value)
+    torch.testing.assert_close(
+        state["layer4.0.bn1.running_var"], weights["layer4.0.bn1.running_var"]
+    )
+
+
+def test_load_imagenet_with_the_mlp_head_still_rejects_a_missing_layer() -> None:
+    weights = _imagenet_like()
+    del weights["layer3.0.conv2.weight"]
+    with pytest.raises(ValueError, match="layer3.0.conv2.weight"):
+        load_imagenet(build_model(head="mlp"), weights)
+
+
+def test_imagenet_init_builds_the_mlp_head_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    weights = _imagenet_like("resnet34")
+    path = tmp_path / WEIGHTS["resnet34"][0]
+    torch.save(weights, path)
+    monkeypatch.setitem(resnet3d.WEIGHTS, "resnet34", (path.name, resnet3d._sha256(path)))
+    model = build_model("resnet34", "imagenet", tmp_path, "mlp")
+    assert model.fc[0].in_features == 512
+    torch.testing.assert_close(
+        model.state_dict()["layer3.2.bn2.running_var"], weights["layer3.2.bn2.running_var"]
+    )
+
+
+def test_load_kinetics_accepts_a_missing_mlp_head_and_rejects_a_missing_layer() -> None:
+    model = _Tiny()
+    model.fc = torch.nn.Sequential(torch.nn.Linear(4, 8), torch.nn.ReLU(), torch.nn.Linear(8, 14))
+    load_kinetics(model, _kinetics_like())
+    weights = _kinetics_like()
+    del weights["layer1.0.weight"]
+    with pytest.raises(ValueError, match="layer1.0.weight"):
+        load_kinetics(model, weights)
+
+
+def test_r3d18_mlp_head_is_512_to_256_to_14() -> None:
+    pytest.importorskip("torchvision")
+    model = build_model("r3d18", head="mlp")
+    assert (model.fc[0].in_features, model.fc[4].out_features) == (512, 14)
