@@ -29,7 +29,7 @@ present, and on which of 13 arteries.
 Scan type shifts both image and base rate: CTA is positive twice as often as MRI, and T2 slices sit
 eight times farther apart than CTA slices.
 
-![One labelled aneurysm per scan type](dataset-scans.png)
+![One labelled aneurysm per scan type](figures/dataset-scans.png)
 
 *Figure 1. One labelled aneurysm per scan type. Top: annotated slice. Bottom: 50 mm crop around the
 expert's centre point. Flowing blood is bright on CTA, MRA and T1 post-contrast, and
@@ -61,7 +61,7 @@ The score is ½ · (AUC of Aneurysm Present + mean AUC of the 13 locations), so 
 as much as a common one. The two anterior cerebral arteries have only 6–16 positives per validation
 fold, so their AUCs are noisy.
 
-![Positive series per location, by scan type](dataset-classes.png)
+![Positive series per location, by scan type](figures/dataset-classes.png)
 
 *Figure 2. Positive series per location, coloured by scan type (ICA: internal carotid artery).*
 
@@ -71,7 +71,7 @@ Each series is resampled to 128³ voxels in RAS orientation, clipped at its 0.5t
 percentiles and z-scored. 4,311 series pass. The other 37 fail a geometry check, mostly mixed
 orientation or slice gaps; they are left out of training and receive the label prior at prediction.
 
-![The MRA series after preprocessing](dataset-model-input.png)
+![The MRA series after preprocessing](figures/dataset-model-input.png)
 
 *Figure 3. The MRA series from Figure 1 after preprocessing (maximum-intensity projections). The 13
 location labels name segments of this arterial tree.*

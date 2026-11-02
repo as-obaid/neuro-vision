@@ -46,5 +46,6 @@ slurm/logs/
 # W&B local run files
 wandb/
 
-# Internal docs stay local: only the top-level files in docs/ are committed
+# Internal docs stay local: only the top-level files in docs/ and their figures are committed
 docs/*/
+!docs/figures/
