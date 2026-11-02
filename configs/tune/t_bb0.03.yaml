@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# Backbone learning-rate scale 0.03 (backbone 9e-6, head 3e-4): does an even smaller backbone change help?
+train: {backbone_lr_scale: 0.03}

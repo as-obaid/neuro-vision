@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# EMA decay 0.998 (from 0.999): about 435 steps per epoch, so the average spans about 1 epoch instead of 2.
+train: {ema_decay: 0.998}
