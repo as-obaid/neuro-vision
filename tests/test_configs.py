@@ -238,8 +238,14 @@ def test_stage2_configs_change_one_variable() -> None:
 
 
 TUNE = sorted((CONFIGS / "tune").glob("*.yaml"))
-# configs with their own exact-diff tests: the reference, the batch control, the Kinetics arm
-TUNE_MULTI_LEAF = {"t_r0.yaml", "t_flip_b4.yaml", "t_flip_b4_r3d18.yaml"}
+# configs with their own exact-diff tests: the reference, the batch control, the Kinetics arm,
+# the batch-16 rate push
+TUNE_MULTI_LEAF = {
+    "t_r0.yaml",
+    "t_flip_b4.yaml",
+    "t_flip_b4_r3d18.yaml",
+    "t_flip_b4_r3d18_mm160_aug0.1_b16_lr1.2e-3.yaml",
+}
 
 
 def test_tune_configs_train_ten_epochs_without_early_stop() -> None:
@@ -332,6 +338,15 @@ def test_kinetics_config_changes_only_backbone_and_init() -> None:
     cfg = load_config(CONFIGS / "tune" / "t_flip_b4_r3d18.yaml")
     assert cfg.train is not None
     assert (cfg.train.backbone, cfg.train.init) == ("r3d18", "kinetics")
+
+
+def test_batch16_push_changes_only_batch_accumulation_and_rate() -> None:
+    stem = "t_flip_b4_r3d18_mm160_aug0.1"
+    diff = _tune_diff(f"{stem}_b16_lr1.2e-3.yaml", f"{stem}_lr6e-4.yaml")
+    assert diff == {"train.batch_size", "train.accum_steps", "train.lr"}
+    cfg = load_config(CONFIGS / "tune" / f"{stem}_b16_lr1.2e-3.yaml")
+    assert cfg.train is not None
+    assert (cfg.train.batch_size, cfg.train.accum_steps, cfg.train.lr) == (16, 1, 1.2e-3)
 
 
 def test_init_must_fit_the_backbone() -> None:
