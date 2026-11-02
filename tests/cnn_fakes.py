@@ -47,12 +47,20 @@ def write_store(root: Path) -> None:
     ).to_csv(cache / "index.csv", index=False)
 
 
-def write_config(path: Path, *, epochs: int = 2, num_workers: int = 0, prob: float = 0.2) -> Path:
+def write_config(
+    path: Path,
+    *,
+    epochs: int = 2,
+    num_workers: int = 0,
+    prob: float = 0.2,
+    early_stop_patience: int | None = None,
+) -> Path:
+    patience = "null" if early_stop_patience is None else early_stop_patience
     path.write_text(
         "kind: cnn\nseed: 0\nlabels: corrected\n"
         f"train: {{epochs: {epochs}, batch_size: 2, accum_steps: 1, lr: 1.0e-3,"
         f" weight_decay: 0.01, warmup_epochs: 1, ema_decay: 0.9, loss_weights: uniform,"
-        f" num_workers: {num_workers}}}\n"
+        f" num_workers: {num_workers}, early_stop_patience: {patience}}}\n"
         f"augment: {{prob: {prob}, noise_std: 0.1, gamma: [0.7, 1.5], rotate_deg: 10,"
         " scale: 0.1, lowres_zoom: [0.5, 1.0]}\n"
     )

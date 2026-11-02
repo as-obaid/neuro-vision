@@ -27,6 +27,8 @@ class TrainConfig(_Frozen):
     ema_decay: float = Field(gt=0, lt=1)
     loss_weights: Literal["uniform"]
     num_workers: int = Field(ge=0)
+    # stop once validation loss has not improved for this many epochs; None trains every epoch
+    early_stop_patience: PositiveInt | None = None
 
     @model_validator(mode="after")
     def _warmup_fits_in_training(self) -> Self:

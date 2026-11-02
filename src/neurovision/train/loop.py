@@ -205,6 +205,8 @@ def fit(
     run = log.start(config, fold, run_dir)
     try:
         for epoch in range(first_epoch, cfg.epochs):
+            if stalled([r["val_loss"] for r in rows], cfg.early_stop_patience):
+                break
             t0 = time.perf_counter()
             train_loss = train_one_epoch(
                 model,
@@ -244,6 +246,13 @@ def fit(
         _write_outputs(meta, run_dir, val_ds, val_uids, prior, valid, rows, device)
     finally:
         run.finish({"best_val_score": best_score})
+
+
+def stalled(val_losses: list[float], patience: int | None) -> bool:
+    """True once the last `patience` epochs have not lowered the best validation loss."""
+    if patience is None or not val_losses:
+        return False
+    return len(val_losses) - 1 - int(np.argmin(val_losses)) >= patience
 
 
 def _resume(

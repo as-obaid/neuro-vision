@@ -12,7 +12,7 @@ from monai.transforms import Randomizable
 from neurovision.config import load_config
 from neurovision.data.labels import TARGETS
 from neurovision.train import loop
-from neurovision.train.loop import fit, train_loader, val_loader
+from neurovision.train.loop import fit, stalled, train_loader, val_loader
 from tests.cnn_fakes import fold0_datasets, write_config, write_store
 
 PRIOR = np.full(14, 0.3)
@@ -32,10 +32,13 @@ def wandb_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WANDB_SILENT", "true")
 
 
-def _fit(tmp_path: Path, run: str, epochs: int = 2) -> Path:
+def _fit(tmp_path: Path, run: str, epochs: int = 2, early_stop_patience: int | None = None) -> Path:
     if not (tmp_path / "store").exists():
         write_store(tmp_path / "store")
-    config = load_config(write_config(tmp_path / "b2.yaml", epochs=epochs))
+    path = write_config(
+        tmp_path / "b2.yaml", epochs=epochs, early_stop_patience=early_stop_patience
+    )
+    config = load_config(path)
     train_ds, val_ds, val_uids = fold0_datasets(tmp_path / "store")
     run_dir = tmp_path / run
     run_dir.mkdir()
@@ -270,3 +273,60 @@ def test_validation_loader_keeps_workers_alive(
     cfg = load_config(write_config(tmp_path / "b2.yaml", num_workers=workers)).train
     assert cfg is not None
     assert val_loader(val_ds, cfg, False).persistent_workers is persistent
+
+
+@pytest.mark.parametrize(
+    ("losses", "patience", "expected"),
+    [
+        ([], 2, False),
+        ([0.3, 0.4, 0.5], None, False),
+        ([0.3, 0.4], 2, False),
+        ([0.3, 0.4, 0.5], 2, True),
+        ([0.3, 0.4, 0.2, 0.5], 2, False),
+        ([0.3, 0.3, 0.3], 2, True),  # a tie is not an improvement
+    ],
+)
+def test_stalled(losses: list[float], patience: int | None, expected: bool) -> None:
+    assert stalled(losses, patience) is expected
+
+
+def _rising_val_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = loop.evaluate
+    calls = []
+
+    def rising(*args, **kwargs):
+        probs, _ = real(*args, **kwargs)
+        calls.append(1)
+        return probs, float(len(calls))
+
+    monkeypatch.setattr(loop, "evaluate", rising)
+
+
+def test_early_stopping_ends_training_and_writes_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _rising_val_loss(monkeypatch)
+    run = _fit(tmp_path, "run", epochs=4, early_stop_patience=1)
+    assert len(pd.read_csv(run / "history.csv")) == 2
+    assert (run / "meta.json").exists()
+
+
+def test_resume_after_early_stop_trains_no_more(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _rising_val_loss(monkeypatch)
+    real = loop._write_outputs
+    calls = []
+
+    def fail_once(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("killed")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "_write_outputs", fail_once)
+    with pytest.raises(RuntimeError, match="killed"):
+        _fit(tmp_path, "run", epochs=4, early_stop_patience=1)
+    _fit_again(tmp_path, "run")
+    assert len(pd.read_csv(tmp_path / "run" / "history.csv")) == 2
+    assert (tmp_path / "run" / "meta.json").exists()

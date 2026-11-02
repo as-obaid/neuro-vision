@@ -12,14 +12,15 @@ CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 GBM = {"max_iter": 200, "learning_rate": 0.05, "max_depth": 3}
 TRAIN = {
     "epochs": 30,
-    "batch_size": 2,
-    "accum_steps": 4,
-    "lr": 1.0e-4,
+    "batch_size": 8,
+    "accum_steps": 1,
+    "lr": 3.0e-4,
     "weight_decay": 1.0e-2,
     "warmup_epochs": 1,
     "ema_decay": 0.999,
     "loss_weights": "uniform",
     "num_workers": 8,
+    "early_stop_patience": 5,
 }
 AUGMENT = {
     "prob": 0.2,
@@ -140,6 +141,7 @@ def test_non_positive_value_raises(tmp_path: Path) -> None:
         ("train", "ema_decay", 1),
         ("train", "ema_decay", 1.5),
         ("train", "num_workers", -1),
+        ("train", "early_stop_patience", 0),
         ("augment", "prob", -0.1),
         ("augment", "prob", 1.1),
         ("augment", "noise_std", -0.1),

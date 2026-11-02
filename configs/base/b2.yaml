@@ -1,7 +1,10 @@
 extends: common.yaml
 kind: cnn
 # Uniform BCE answers the Oct 19 feedback; metric weights are a Stage 2 option.
-train: {epochs: 30, batch_size: 2, accum_steps: 4, lr: 1.0e-4, weight_decay: 1.0e-2,
-        warmup_epochs: 1, ema_decay: 0.999, loss_weights: uniform, num_workers: 8}
+# lr 3e-4 and batch 8 x 1: at lr 1e-4, batch 2 x 4, the fold 0 val score climbed slowly (0.603 at
+# epoch 4, 0.634 at epoch 15). Batch 8 keeps the effective batch and gives BatchNorm 8 samples.
+train: {epochs: 30, batch_size: 8, accum_steps: 1, lr: 3.0e-4, weight_decay: 1.0e-2,
+        warmup_epochs: 1, ema_decay: 0.999, loss_weights: uniform, num_workers: 8,
+        early_stop_patience: 5}
 augment: {prob: 0.2, noise_std: 0.1, gamma: [0.7, 1.5], rotate_deg: 10, scale: 0.1,
           lowres_zoom: [0.5, 1.0]}
