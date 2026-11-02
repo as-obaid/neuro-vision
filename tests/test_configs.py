@@ -230,6 +230,33 @@ def test_stage2_configs_change_one_variable() -> None:
         check_one_variable(child)
 
 
+TUNE = sorted((CONFIGS / "tune").glob("*.yaml"))
+
+
+def test_tune_configs_train_ten_epochs_without_early_stop() -> None:
+    assert TUNE
+    for path in TUNE:
+        assert path.stem.startswith("t_")
+        cfg = load_config(path)
+        assert cfg.train is not None
+        assert cfg.train.epochs == 10, path.name
+        assert cfg.train.early_stop_patience is None, path.name
+
+
+def test_tune_configs_change_one_variable() -> None:
+    for child in TUNE:
+        if child.name != "t_r0.yaml":
+            check_one_variable(child)
+
+
+def test_tune_reference_changes_only_the_schedule() -> None:
+    diff = changed_leaves(
+        resolve(CONFIGS / "tune" / "t_r0.yaml"),
+        resolve(CONFIGS / "stage2" / "b2_imagenet_2lr.yaml"),
+    )
+    assert diff == {"train.epochs", "train.early_stop_patience"}
+
+
 def test_one_variable_check_passes_for_one_changed_leaf(tmp_path: Path) -> None:
     write(tmp_path / "p.yaml", {"seed": 0, "gbm": {"max_iter": 200, "max_depth": 3}})
     write(tmp_path / "c.yaml", {"extends": "p.yaml", "gbm": {"max_depth": 5}})
