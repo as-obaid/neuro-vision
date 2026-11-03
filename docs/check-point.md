@@ -1,12 +1,12 @@
 # Neuro-Vision: midterm checkpoint
 
-A 3D CNN reads one brain scan and flags an intracranial aneurysm and its artery. On fold 0 the
-image model (B2) scores **0.685**, against 0.632 for metadata alone. The gain holds on fold 0 only;
-five folds confirm it next.
+A 3D CNN reads one brain scan and flags an intracranial aneurysm and its artery. Over all five folds
+the image model (B2) scores **0.688**. Metadata alone (B1) scores 0.640, and a constant guess (B0)
+0.500. The image model adds +0.048 over metadata on all 4,348 series.
 
 Full report: https://forge.coreweave.com/wandb/muhammadobaidullah98-northeastern-university/neuro-vision/reports/Neuro-Vision:-midterm-checkpoint--VmlldzoxODIzOTI4Nw==
 
-Scores are on fold 0 (870 validation series) unless marked 5-fold. Figures are in `docs/figures/`.
+Scores are on fold 0 (870 validation series) unless marked 5-fold or by fold. Figures are in `docs/figures/`.
 
 ## 1 Problem and data
 
@@ -55,17 +55,22 @@ Folds (`data/manifests/folds.yaml`):
 
 ## 3 Stage 1: baselines
 
-| Baseline | Inputs | 5-fold score | Fold-0 score | Aneurysm Present AUC | Mean location AUC |
-|:--|:--|--:|--:|--:|--:|
-| B0 | Constant prior | 0.500 | 0.500 | 0.500 | 0.500 |
-| B1 | Gradient boosting on age, sex, scan type | 0.640 | 0.632 | 0.660 | 0.604 |
-| B2 as planned | 3D ResNet-18, random init, uniform BCE | not run | 0.641 | n/a | n/a |
-| B2, best so far | + ImageNet weights, backbone at 0.1 x lr, left-right flip | not run | **0.685** | **0.722** | **0.648** |
+| Baseline | Inputs | 5-fold score | 5-fold AP AUC | 5-fold location AUC | Fold-0 score | Fold-0 AP AUC | Fold-0 location AUC |
+|:--|:--|--:|--:|--:|--:|--:|--:|
+| B0 | Constant prior | 0.500 | 0.500 | 0.500 | 0.500 | 0.500 | 0.500 |
+| B1 | Gradient boosting on age, sex, scan type | 0.640 | 0.672 | 0.609 | 0.632 | 0.660 | 0.604 |
+| B2 as planned | 3D ResNet-18, random init, uniform BCE | fold 0 only | n/a | n/a | 0.641 (h) | n/a | n/a |
+| B2 flip run | + ImageNet weights, backbone at 0.1 x lr, left-right flip | fold 0 only | n/a | n/a | 0.685 | 0.722 | 0.648 |
+| **B2 final** | Kinetics r3d_18, 1 mm head crop at 160³, flip, lr x 2 (section 6) | **0.688** | **0.717** | **0.660** | 0.707 (h) | n/a | n/a |
 
-Sources: `results/b0.json`, `results/b1.json`. Fold-0 values come from each run's `oof.csv` (`best.pt`). B2 as
-planned was stopped at epoch 18 of 30; its score is from `history.csv`.
+AP = Aneurysm Present. Location AUC = mean of the 13 location AUCs.
 
-B2 setup:
+Sources: `results/b0.json`, `results/b1.json`, `results/b2.json`. The 5-fold values pool the out-of-fold
+predictions of all 4,348 series. Fold-0 values come from each run's `oof.csv` (`best.pt`). (h) marks the two
+from `history.csv`: B2 as planned (stopped at epoch 18 of 30) and B2 final (best epoch 8).
+`history.csv` skips series that fail preprocessing, so it can read up to 0.003 high (section 7).
+
+B2 setup as planned (the final config changes backbone, input, augmentation, learning rate and batch; section 6):
 
 | Item | Value |
 |:--|:--|
@@ -85,8 +90,9 @@ rate. Source: `history.csv` of each run.*
 - **B2 as planned only matches B1.** Its validation loss settles at the scan-type floor (0.1873 vs 0.1874). It
   has learned the scan type, not the aneurysm.
 - **ImageNet weights break the floor** by epoch 5 (section 4).
-- **The image signal is real on fold 0.** Paired bootstrap over the 870 series (2,000 resamples): best B2
+- **The image signal is real on fold 0.** Paired bootstrap over the 870 series (2,000 resamples): flip run
   minus B1 = +0.054 (95% CI 0.026 to 0.081).
+- **It holds on 5 folds.** B2 final scores 0.688 over all 4,348 series, +0.048 over B1 (section 6).
 
 ## 4 Stage 2: focused experiments
 
@@ -189,7 +195,8 @@ Findings (round 3):
 
 ## 5 Behaviour analysis
 
-Best B2 (flip run), fold 0, `best.pt`, 870 series.
+Flip run (the best B2 when this analysis was made), fold 0, `best.pt`, 870 series. The final 5-fold run is
+in section 6.
 
 **Learning curves (Figure 1).**
 
@@ -197,6 +204,9 @@ Best B2 (flip run), fold 0, `best.pt`, 870 series.
 - The ImageNet start drops below the floor at epoch 5 and reaches 0.1836 at epoch 6.
 - It then overfits. Over epochs 6-9, training loss falls 0.157 to 0.120 and validation loss rises 0.184 to 0.190.
 - The best epoch is 6 or 7 of 10 in every ImageNet run with the 0.1 x backbone rate.
+- The 30-epoch final run (section 6) peaks later: best epochs 8-12. Every fold early-stopped, after 13-15
+  epochs. Validation loss is lowest at epochs 7-9. After that, training loss keeps falling while validation
+  loss rises. The score flattens or slips, by up to 0.009.
 
 **Per label.**
 
@@ -232,18 +242,62 @@ the arteries.
 
 ## 6 Stage 3 direction
 
+**Final B2 on five folds: done.**
+
+| Item | Value |
+|:--|:--|
+| Config | `configs/final/b2_final.yaml` (commit `d1a400c`): the best fold-0 tune run |
+| Model and input | r3d_18 with Kinetics-400 weights; 1 mm head crop at 160³; left-right flip; augmentation probability 0.1 |
+| Training | lr 6e-4 head, 6e-5 backbone; batch 4 x 2; up to 30 epochs; stop after 5 epochs without a lower validation loss |
+| Checkpoint | `best.pt` and `oof.csv` from the epoch with the highest validation score |
+| Tracking | W&B group `b2_final`, one run per fold: `b2_final-fold0` to `b2_final-fold4` |
+| Cost | About 6.1 L40S GPU-hours, in resumed 1 h jobs |
+
+| Fold | Epochs run | Best epoch | Best validation score |
+|--:|--:|--:|--:|
+| 0 | 14 | 8 | 0.7075 |
+| 1 | 13 | 10 | 0.6823 |
+| 2 | 13 | 8 | 0.6854 |
+| 3 | 15 | 9 | 0.7105 |
+| 4 | 13 | 12 | 0.6942 |
+| Mean (sd) | | | 0.696 (0.013) |
+| Pooled out-of-fold, all 4,348 series | | | **0.688** |
+
+Sources: each fold's `history.csv`; pooled score from `scripts/score_oof.py`, saved as `results/b2.json`.
+
+![Validation score per epoch for the five folds of the final B2 run, with each fold's best epoch marked](figures/final-5fold-curves.png)
+
+*Figure 5. Final B2, validation score per epoch on each fold. The large dot is the best epoch, which gives
+`best.pt` and `oof.csv`. Each line ends where early stopping ended that fold. Source: `history.csv` of each fold.*
+
+- **Five folds confirm the image signal.** Pooled score 0.688 vs B1 0.640 (+0.048). Aneurysm Present AUC
+  is 0.717 (B1 0.672); mean location AUC is 0.660 (B1 0.609).
+- **The pooled score sits below the per-fold mean** (0.688 vs 0.696). Pooling ranks the predictions of five
+  different models together, so small shifts between models cost AUC.
+- **Folds differ.** Folds 1 and 2 score about 0.68; folds 0 and 3 about 0.71. This spread is larger than most
+  single Stage 2 steps (0.002-0.006, section 4). Fold 0, the tuning fold, is not the top fold.
+- **Strongest locations:** Right posterior communicating 0.757, Left posterior communicating 0.755, Left ACA
+  0.743.
+- **Weakest locations:** Other posterior circulation 0.579, Left infraclinoid ICA 0.585, Right infraclinoid
+  ICA 0.619.
+- **B2 beats B1 on all 13 locations,** but by less than 0.01 on four: Right infraclinoid ICA, Left MCA,
+  Anterior communicating, Right ACA. Source: `results/b1.json`, `results/b2.json`.
+- **Rare labels stay noisy.** Left ACA was 0.59 for the flip run on fold 0 and is 0.743 here, with 8-11
+  positives per fold.
+- **Every fold early-stopped** after 13-15 epochs, with best epochs 8-12 (section 5).
+
 | Finding | What it implies |
 |:--|:--|
 | The model finds aneurysms on CTA and MRA (section 5) | The pipeline works |
 | Starting weights gave the largest gains (section 4) | The start point matters more than loss, head or regularization |
 | 160³ and the 1 mm head crop add 0.005 or less at the final epoch | Finer whole-head input alone is not enough |
-| Audit ceiling about 0.70-0.72; best run 0.711 | More tuning of the whole-scan classifier has low value |
-| Locations stay weak (0.648 on the flip run; MRA near chance) | The model needs a signal for where the arteries are |
+| Audit ceiling about 0.70-0.72; best fold-0 run 0.711; final per-fold mean 0.696 | More tuning of the whole-scan classifier has low value |
+| Locations stay weak (5-fold 0.660; MRA near chance on fold 0) | The model needs a signal for where the arteries are |
+| Fold spread (0.682-0.710) is larger than most tuning steps | Judge future changes on 5 folds, not fold 0 alone |
 
 Direction:
 
-1. **Finish B2.** Pick the final config once the two running runs end. Train it on folds 1-4, report the
-   5-fold mean, and ensemble the 5 fold models for Kaggle.
+1. **B2 is done on 5 folds** (above). Next: ensemble the 5 fold models for Kaggle.
 2. **Stage 3: arm A (proposal Section 5).** A 2D detector (YOLOv8n) on sagittal and coronal MIPs finds the
    vessel region. The classifier reads it with finer voxels than the 1 mm head crop. Candidate addition, not
    in the proposal: the competition's aneurysm localizer points as extra training targets. Arm B stays a
@@ -251,21 +305,26 @@ Direction:
 
 Gates before Stage 3:
 
-1. Confirm the final config on folds 1-4. The project rule keeps a fold-0 gain only if 5 folds confirm it.
+1. Confirm the final config on folds 1-4. **Done:** 0.688 on 5 folds vs B1 0.640. This confirms the config
+   as a whole; each Stage 2 step's own gain is still fold-0 only. The paired bootstrap against B1 on 5 folds
+   is not yet run.
 2. Run seeds 1 and 2 of the final config to measure the seed spread.
-3. Score its `oof.csv` and repeat section 5.
+3. Score its `oof.csv` and repeat section 5. **Scored** (`results/b2.json`; per-label AUCs above). The
+   per-scan-type view on 5 folds is still to do.
 
-Compute so far: about 18 GPU-hours for 36 fold-0 runs, mostly L40S (`history.csv` timings). One 5-fold run of
-the best config costs about 4 L40S-hours, well inside the proposal's budget.
+Compute so far: about 24 GPU-hours, mostly L40S. The 36 fold-0 runs took about 18 (`history.csv` timings).
+The final 5-fold run took about 6.1 L40S-hours, at about 4.8 minutes per epoch (253 s training + 32 s
+validation). That is above the earlier 4-hour estimate because each fold ran 13-15 epochs, not 10. All of it
+sits well inside the proposal's budget.
 
 ## 7 Limitations
 
 | Limit | Effect |
 |:--|:--|
-| Fold 0 only | Stage 2 gains, the 0.711 best run included, are not yet confirmed on 5 folds. |
-| One seed per run | Seed spread is unmeasured. The paired bootstrap's 95% CI for two related runs spans about ±0.010 (flip vs reference), so most round 3 steps (0.002-0.006) are within noise. |
-| Config and epoch chosen on the scored fold | 36 runs share one validation set, so the best score is optimistic. |
-| 10-epoch protocol | Favors fast learners (random init still rising at epoch 9); lr x 2 helped on the head crop and not on the cube. The 30-epoch schedule of the final config is queued (5 folds, from Nov 4). |
+| Tuned on fold 0 | Stage 2 steps were chosen on fold 0. The final config is confirmed on 5 folds as a whole (0.688 vs B1 0.640); each step's own gain is still fold-0 only. |
+| One seed per run | Seed spread is unmeasured. The paired bootstrap's 95% CI for two related runs spans about ±0.010 (flip vs reference), so most round 3 steps (0.002-0.006) are within noise. Fold spread is now measured: sd 0.013 across the 5 folds (0.682-0.710). |
+| Config and epoch chosen on the scored fold | 36 runs share one validation set, so the best score is optimistic. The final run also picks each fold's best epoch on that fold. Folds 1-4 played no part in tuning: their mean is 0.693, against 0.707 on fold 0. |
+| 10-epoch protocol | Favors fast learners (random init still rising at epoch 9); lr x 2 helped on the head crop and not on the cube. The final config ran on the 30-epoch schedule: every fold early-stopped after 13-15 epochs, best epochs 8-12. |
 | Bootstrap covers validation sampling only | It ignores seed noise and epoch selection. |
 | 37 series fail preprocessing | They get the label prior (7 in fold 0). `history.csv` scores skip them and read up to 0.003 higher than `oof.csv`. |
 | No patient key | The same patient across different visits cannot be linked. |
