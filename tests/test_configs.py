@@ -349,6 +349,14 @@ def test_batch16_push_changes_only_batch_accumulation_and_rate() -> None:
     assert (cfg.train.batch_size, cfg.train.accum_steps, cfg.train.lr) == (16, 1, 1.2e-3)
 
 
+def test_score_loss_weights_on_the_best_tune_run() -> None:
+    stem = "t_flip_b4_r3d18_mm160_aug0.1_lr6e-4"
+    assert _tune_diff(f"{stem}_lossw.yaml", f"{stem}.yaml") == {"train.loss_weights"}
+    cfg = load_config(CONFIGS / "tune" / f"{stem}_lossw.yaml")
+    assert cfg.train is not None
+    assert cfg.train.loss_weights == "competition"
+
+
 def test_final_config_restores_the_base_schedule_on_the_best_tune_run() -> None:
     diff = changed_leaves(
         resolve(CONFIGS / "final" / "b2_final.yaml"),
