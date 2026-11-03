@@ -1,333 +1,508 @@
 # Neuro-Vision: midterm checkpoint
 
-A 3D CNN reads one brain scan and flags an intracranial aneurysm and its artery. Over all five folds
-the image model (B2) scores **0.688**. Metadata alone (B1) scores 0.640, and a constant guess (B0)
-0.500. The image model adds +0.048 over metadata on all 4,348 series.
+**AAI 6640 Applied Deep Learning · Final project, Stages 1 and 2 · Northeastern University**
 
-Full report: https://forge.coreweave.com/wandb/muhammadobaidullah98-northeastern-university/neuro-vision/reports/Neuro-Vision:-midterm-checkpoint--VmlldzoxODIzOTI4Nw==
+| | |
+|:--|:--|
+| Group members | Muhammad Obaidullah · Pichpisey Piseth · Emmanuel Matthews |
+| Instructor | Prof. Dr. Behnaz Merikhi |
+| Due | November 8, 2026 |
+| Report | [W&B report](https://forge.coreweave.com/wandb/muhammadobaidullah98-northeastern-university/neuro-vision/reports/Neuro-Vision-midterm-checkpoint--VmlldzoxODIzOTI4Nw) (this document plus live run panels) |
+| Data | [RSNA Intracranial Aneurysm Detection](https://www.kaggle.com/competitions/rsna-intracranial-aneurysm-detection): 4,348 training series, 311 GB of DICOM |
 
-Scores are on fold 0 (870 validation series) unless marked 5-fold or by fold. Figures are in `docs/figures/`.
+Neuro-Vision is a 3D CNN that reads one brain scan and returns 14 probabilities: is an intracranial
+aneurysm present, and on which of 13 arteries.
 
-## 1 Problem and data
+| Stage | Result |
+|:--|:--|
+| 1 · Baseline | The proposed 3D ResNet-18 (B2) scored 0.641 on fold 0, level with metadata alone (B1, 0.632). Its loss settled at the floor set by scan type: it had learned the scan type, not the aneurysm. |
+| 2 · Optimization | 37 runs on fold 0, nearly all changing one setting of a named parent. Pretrained weights, a lower backbone learning rate, a left–right flip and a video backbone gave the gains; loss weighting and regularization did not. Fold 0 rose to 0.711. |
+| Final baseline | On all 4,348 series over five folds, the tuned B2 scores **0.688** out of fold, against 0.640 for B1 (+0.048, 95% CI 0.035 to 0.062). |
+| 3 · Next | Arm A: find the vessel region and read it at finer resolution. Locations are the weak half of the score, and Grad-CAM shows the model's evidence is not on the aneurysm. |
 
-Task: from one scan, return 14 probabilities. One is "aneurysm present"; 13 are arteries. Score is the mean of the Aneurysm Present AUC and the mean of the 13 location AUCs.
+## 1 Progress overview
 
-| Item | Value | Source |
+### 1.1 Status
+
+| Work item | Status | Evidence |
 |:--|:--|:--|
-| Training series | 4,348 | `results/audit.json` |
-| CTA / MRA / MRI T2 / MRI T1post | 1,808 / 1,252 / 983 / 305 | `results/audit.json` |
-| Positive series | 1,863 (42.8%) | `results/audit.json` |
-| Age | 18-89, median 60 | `results/audit.json` |
-| Sex | 3,005 female, 1,343 male | `results/audit.json` |
-| Missing values | none | `results/audit.json` |
-| Kaggle hidden test | nearly 2,500 series | `results/audit.json` |
-| Preprocessed (128³) | 4,311 pass; 37 fail a geometry check and get the label prior | cache index |
-| Orientation check | 322 multi-frame series use an assumed orientation; all 322 match the true axes | one-off check, `$NV_STORE/checks/` |
+| Data download and audit | Done | 4,348 series, no missing values: `results/audit.json` |
+| Corrected labels | Done | 7 cells in 4 series changed: `data/manifests/labels.yaml` |
+| Leakage check and folds | Done | Header audit `results/headers.json`; folds `data/manifests/folds.yaml` |
+| Competition metric | Done | Matches Kaggle's code to 1e-6: `tests/test_metric.py` |
+| Stage 1: B0, B1, B2 as proposed | Done | `results/b0.json`, `results/b1.json`; W&B run `b2-lr3e-4-bs8-fold0` |
+| Stage 2: controlled experiments | Done | 37 fold-0 runs; W&B tags `round1` and `tune` |
+| Final baseline on five folds | Done | `results/b2.json`; W&B group `b2_final` |
+| Diagnostics | Done | `results/b2_diagnostics.json`; Section 5 |
+| Stage 3: arm A | Next | Section 7 |
+| Kaggle late submission | Planned for week 13 | Run once, on the final models |
 
-Labels:
+### 1.2 Changes since the proposal
 
-- Corrected labels are derived from the 26-class masks of Shi et al. (CC BY-NC 4.0).
-- 4 series changed: 7 cells, 2 left-right swaps, no Aneurysm Present change.
-- Source: `data/manifests/labels.yaml`.
+| Area | Proposal | Now | Reason |
+|:--|:--|:--|:--|
+| Folds | 5-fold cross-validation | Grouped by FrameOfReferenceUID, so the 672 multi-series sessions stay in one fold | Instructor feedback on patient overlap. PatientID is unique per series, so no patient key exists. |
+| Loss | Score weights: Aneurysm Present 13, each location 1 | Uniform binary cross-entropy | Instructor feedback asked for a justification. Score weights then lost in 3 of 4 tests (E1). |
+| Pretrained weights | Med3D, as a Stage 2 option | ImageNet ResNet-18 inflated to 3D [3], then the Kinetics-400 [8] video ResNet r3d_18 [7] | Public torchvision weights, pinned by SHA-256 (`data/manifests/weights.yaml`). Random init learned only the scan type (Section 3). |
+| Input | Whole head resized to 128³ | 1 mm voxels, a 160 mm crop on the head, 160³ | A cube resize ignores voxel spacing; CTA keeps the neck and table (E5). |
+| Labels | `train.csv` | Corrected labels from the artery masks of Shi et al. [4] | 7 cells were wrong, 2 of them left–right swaps. |
+| Deliverable | One notebook | This repository plus the W&B report | Agreed with the instructor. |
+| Compute | About 78 H200-hours, unvalidated | 26 GPU-hours of epoch time, mostly on L40S cards | Summed from each run's per-epoch times. Stage 3 fits the remaining budget. |
 
-Scan types, label counts and example scans: [dataset.md](dataset.md).
+## 2 Team participation and individual contribution
 
-## 2 Splits and leakage
+The meeting record (Table 1) and the contribution summary (Table 2) are in Section 2 of the
+[W&B report](https://forge.coreweave.com/wandb/muhammadobaidullah98-northeastern-university/neuro-vision/reports/Neuro-Vision-midterm-checkpoint--VmlldzoxODIzOTI4Nw).
 
-Headers (header scan; source `results/headers.json`):
+## 3 Stage 1: baseline
 
-| Header | Finding |
+### 3.1 Data and preprocessing
+
+| Step | Setting | Result |
+|:--|:--|:--|
+| Read | pydicom; slices ordered by position [1, 2] | 4,348 series; CTA 1,808 · MRA 1,252 · MRI T2 983 · MRI T1post 305 |
+| Geometry check | One orientation, no slice gaps, enough slices | 4,311 pass. 37 fail (19 mixed orientation, 15 slice gaps, 3 other) and receive the label prior. |
+| Orientation | Reoriented to RAS | 322 multi-frame MR series lack per-slice orientation; all 322 match their true axes. |
+| Resample, as proposed | Whole scan resized to 128³ with antialiasing | Median voxel side 1.8 mm (90th percentile 3.0 mm) |
+| Intensity | Clip at the 0.5th and 99.5th percentiles, then z-score per series | |
+| Augmentation | Each with probability 0.2: noise, gamma, rotation ±10°, scale ±10%, low-resolution zoom | Training only |
+
+Labels are multi-label: Aneurysm Present is 1 when any of the 13 locations is 1. 1,863 series
+(42.8%) are positive. Rare locations have 46–113 positives in total. Details: [dataset.md](dataset.md).
+
+### 3.2 Splits
+
+- **Train and validation.** Five folds, stratified by Aneurysm Present × scan type. Series that share
+  a FrameOfReferenceUID (one scanning session) share a fold: 3,509 groups, the largest of 5.
+- **Fold size.** 869–870 series per fold, 42.8–42.9% positive. Each series is validated once, so the
+  five folds give out-of-fold (OOF) predictions for all 4,348 series.
+- **Test.** Kaggle's hidden test set, about 2,500 series [1], scored once by late submission. No internal
+  test split: the rarest arteries have only 6–16 positives per fold.
+- **Stage 2** tuned on fold 0 only: 3,478 training series (30 fail preprocessing) and 870 validation.
+
+### 3.3 Reference baselines
+
+| Baseline | Inputs | 5-fold score | Fold-0 score | Purpose |
+|:--|:--|--:|--:|:--|
+| B0 | None: one constant prior | 0.500 | 0.500 | Floor check for the scorer |
+| B1 | Age, sex and scan type; gradient boosting | 0.640 | 0.632 | What metadata alone earns. An image model must beat it. |
+
+### 3.4 B2 as proposed
+
+| Item | Setting |
 |:--|:--|
-| PatientID, StudyInstanceUID | Unique per series. Kaggle's data page says they "do not identify anything". |
-| FrameOfReferenceUID | Links 1,511 series into 672 same-session groups (largest 5; sex and age agree in every group). Empty for 532. |
-| StudyDate | Too coarse: one date covers 316 series. |
+| Architecture | MONAI [6] 3D ResNet-18 [3]: 7³ stem, 4 stages × 2 residual blocks (64–512 channels), BatchNorm, global average pool, linear 512 → 14; 33.2 M parameters |
+| Activations | ReLU inside the network; one sigmoid per output, since a series can carry up to 5 locations |
+| Loss | Binary cross-entropy, uniform over the 14 labels |
+| Optimizer and schedule | AdamW [9], learning rate 3e-4, weight decay 0.01; 1 warm-up epoch, then cosine decay |
+| Batch and epochs | Batch 8; up to 30 epochs; stop after 5 epochs without a lower validation loss |
+| Other settings | Random init; EMA of weights (decay 0.999); bf16 training, fp32 prediction; the epoch with the best validation score is kept |
+| Cost | 140 s training and 15 s validation per epoch on one L40S |
 
-Folds (`data/manifests/folds.yaml`):
+A first run at learning rate 1e-4 and batch 2 × 4 climbed more slowly (0.634 at epoch 15), so
+3e-4 and batch 8 became the reference.
 
-| Item | Value |
-|:--|:--|
-| Method | 5 folds, StratifiedGroupKFold by Aneurysm Present x modality |
-| Group key | FrameOfReferenceUID (3,509 groups) |
-| Seed, labels | 0, corrected |
-| Fold size | 869-870 series |
-| Positive rate per fold | 42.8-42.9% |
-| Thinnest cells (positives per fold) | Left ACA 8-11; Right ACA 6-16; Left infraclinoid ICA 8-28 |
+### 3.5 Metrics
 
-## 3 Stage 1: baselines
+- **Primary:** the competition score, ½ × (Aneurysm Present AUC + mean of the 13 location AUCs).
+  A rare artery counts as much as a common one.
+- **Secondary:** Aneurysm Present AUC, mean location AUC, AUC per label and per scan type.
+- **Scan-type floor:** the loss of predicting each scan type's base rate, 0.1874 on fold 0. A
+  model whose loss stays there has learned only the scan type.
+- **Beyond AUC:** sensitivity, specificity and calibration of Aneurysm Present (Section 5).
 
-| Baseline | Inputs | 5-fold score | 5-fold AP AUC | 5-fold location AUC | Fold-0 score | Fold-0 AP AUC | Fold-0 location AUC |
-|:--|:--|--:|--:|--:|--:|--:|--:|
-| B0 | Constant prior | 0.500 | 0.500 | 0.500 | 0.500 | 0.500 | 0.500 |
-| B1 | Gradient boosting on age, sex, scan type | 0.640 | 0.672 | 0.609 | 0.632 | 0.660 | 0.604 |
-| B2 as planned | 3D ResNet-18, random init, uniform BCE | fold 0 only | n/a | n/a | 0.641 (h) | n/a | n/a |
-| B2 flip run | + ImageNet weights, backbone at 0.1 x lr, left-right flip | fold 0 only | n/a | n/a | 0.685 | 0.722 | 0.648 |
-| **B2 final** | Kinetics r3d_18, 1 mm head crop at 160³, flip, lr x 2 (section 6) | **0.688** | **0.717** | **0.660** | 0.707 (h) | n/a | n/a |
+### 3.6 Results and learning curves
 
-AP = Aneurysm Present. Location AUC = mean of the 13 location AUCs.
+![Fold-0 learning curves of B2 as proposed and of the final B2](figures/stage1-curves.png)
 
-Sources: `results/b0.json`, `results/b1.json`, `results/b2.json`. The 5-fold values pool the out-of-fold
-predictions of all 4,348 series. Fold-0 values come from each run's `oof.csv` (`best.pt`). (h) marks the two
-from `history.csv`: B2 as planned (stopped at epoch 18 of 30) and B2 final (best epoch 8).
-`history.csv` skips series that fail preprocessing, so it can read up to 0.003 high (section 7).
+*Figure 1. Fold 0. (a) Validation score per epoch. (b) Loss; the gray line is the scan-type floor.
+Source: `history.csv` of each run.*
 
-B2 setup as planned (the final config changes backbone, input, augmentation, learning rate and batch; section 6):
+<!-- wandb: stage1 -->
 
-| Item | Value |
-|:--|:--|
-| Input | One series at 128³ voxels, RAS, clipped at 0.5-99.5th percentile, z-scored |
-| Model | MONAI 3D ResNet-18, 14 outputs; EMA of weights (decay 0.999) |
-| Training | AdamW, lr 3e-4, weight decay 0.01, batch 8, 1 warm-up epoch, cosine schedule |
-| Augmentation | Probability 0.2 each: noise, gamma, rotation ±10°, scale ±10%, low-resolution zoom |
-| Checkpoint | Best epoch by validation competition score |
-| Cost | 140 s training + 15 s validation per epoch on one L40S (`meta.json`) |
+| Model | Fold-0 score | Best epoch | Lowest validation loss | Training loss at the end |
+|:--|--:|--:|--:|--:|
+| B1 metadata | 0.632 | n/a | n/a | n/a |
+| B2 as proposed | 0.641 | 18 of 19 (stopped) | 0.1873, at the floor | 0.183 |
 
-![Fold-0 validation score and loss per epoch](figures/checkpoint-curves.png)
+What this shows:
 
-*Figure 1. Fold-0 training curves. (a) Validation score. The yellow run uses a 30-epoch schedule, stopped at
-epoch 18; the others use 10 epochs. (b) Loss. The floor is the loss of predicting each scan type's base
-rate. Source: `history.csv` of each run.*
+- **B2 as proposed underfits.** Training loss (0.183) and validation loss (0.1873) both sit near
+  the scan-type floor (0.1874). The model learned nothing beyond the scan type.
+- **The task is hard for a whole-head model.** At 1.8 mm voxels a 5 mm aneurysm spans about three
+  voxels, and most voxels lie outside the arteries.
+- **The data are clean.** No values are missing, 99.1% of series pass preprocessing, and the
+  orientation check passed. The main confound is scan type: 54% of CTA series are positive, against
+  25–26% of MRI series.
+- **The design suits the task; the start point did not.** A series-level 3D CNN needs no box labels
+  and serves cross-validation and Kaggle through one path. From a random start it did not find the
+  aneurysm signal in the fold-0 training set. Stage 2 tests why.
 
-- **B2 as planned only matches B1.** Its validation loss settles at the scan-type floor (0.1873 vs 0.1874). It
-  has learned the scan type, not the aneurysm.
-- **ImageNet weights break the floor** by epoch 5 (section 4).
-- **The image signal is real on fold 0.** Paired bootstrap over the 870 series (2,000 resamples): flip run
-  minus B1 = +0.054 (95% CI 0.026 to 0.081).
-- **It holds on 5 folds.** B2 final scores 0.688 over all 4,348 series, +0.048 over B1 (section 6).
+## 4 Stage 2: optimization experiments
 
-## 4 Stage 2: focused experiments
-
-Protocol:
+### 4.1 Protocol
 
 | Item | Rule |
 |:--|:--|
-| Data | Fold 0: 3,448 training series, 870 validation series |
-| Length | 10 epochs, cosine schedule, no early stop |
-| Changes | One variable per run against its parent config |
-| Kept if | Best score at least parent + 0.010, and the final-epoch score also higher. Round 3 (lean plan, user): smaller gains are stacked; the stack is judged as a whole |
-| Hardware | One GPU per run, mostly L40S: 18-55 minutes |
+| Data | Fold 0; the same folds, scorer and trainer for every run |
+| Change | One variable against a named parent config, enforced by a test |
+| Length | 10 epochs, cosine schedule to zero, no early stop. Round 1 used the 30-epoch schedule and compares epoch 9. |
+| Measure | Best validation score over the epochs, which selects `best.pt`; the final-epoch score guards against a lucky peak |
+| Keep rule | Best score at least +0.010 over the parent and a higher final score. Later, smaller gains were stacked and judged as a stack. |
+| Noise | Paired bootstrap 95% interval for two related runs: about ±0.010 |
+| Cost | 11–48 minutes of epoch time per run; a 160³ run takes 1.9 × as long as a 128³ run |
+| Tracking | One W&B run per experiment; configs in `configs/stage2/` and `configs/tune/`. Epochs count from 0. |
 
-**Round 1: what stops B2 from learning?** All runs use the 30-epoch schedule and are compared at epoch 9.
+### 4.2 Five experiments
 
-| Run (random init unless noted) | Score at epoch 9 | Finding |
-|:--|--:|:--|
-| B2: lr 3e-4, uniform BCE | 0.614 | Reference for this round |
-| Original B2: lr 1e-4, batch 2 x 4 | 0.623 | Slow climb; 0.634 at epoch 15 |
-| Loss weights 13:1 (Aneurysm Present : each location) | 0.596 | Lower |
-| Loss weights, lr 1e-3 | 0.589 (epoch 8) | Unstable |
-| Loss weights, no augmentation | 0.457 (epoch 5) | Validation loss rises from epoch 3 |
-| Loss weights + positive weights √(neg/pos) | 0.592 | Memorizes rare positives |
-| ImageNet weights, one rate | 0.631 | Better |
-| ImageNet, head only for 2 epochs | 0.645 | Better |
-| ImageNet, backbone at 0.1 x lr | **0.669** | First run below the floor (val loss 0.1854) |
+![Change in validation score for every Stage 2 test, grouped by experiment](figures/stage2-effects.png)
 
-**Round 2: tune the ImageNet start.** Reference = ImageNet, backbone at 0.1 x lr, on the 10-epoch
-protocol.
+*Figure 2. Each dot is one run against its parent, fold 0. Blue: on the path to the final config.
+Hollow: round 1, compared at epoch 9 of a 30-epoch schedule. Source: `history.csv` of each run.*
 
-![Change in best validation score per Stage 2 run](figures/checkpoint-stage2.png)
+Each experiment answers a question raised by the model's behavior. Values are changes in fold-0
+score against the parent run. Learning curves for every run sit beside each experiment in the W&B
+report.
 
-*Figure 2. Round 2 results. (a) One change against the reference. (b) Changes added to the flip run.
-Source: the experiment log (from `history.csv`).*
+**E1 Loss weighting.** The score gives Aneurysm Present half its weight; a uniform loss gives it
+1/14.
 
-| Run | Question | Best (epoch) | Final | Decision |
-|:--|:--|--:|--:|:--|
-| Reference | ImageNet, backbone at 0.1 x lr | 0.670 (6) | 0.668 | Reference |
-| Random init | Is the gain the weights or the lower backbone rate? | 0.645 (9) | 0.645 | Weights help |
-| Backbone 0.03 x lr | Should pretrained filters barely move? | 0.666 (7) | 0.665 | Too cautious |
-| Backbone 0.3 x lr | Is 0.1 x too cautious? | 0.675 (9) | 0.675 | Under the bar |
-| Weight decay 0.05 | Does decay curb the late overfit? | 0.670 (7) | 0.666 | No effect |
-| Head-only first epoch | Does it protect the pretrained filters? | 0.669 (7) | 0.664 | No effect |
-| Augmentation probability 0.5 | Does more augmentation curb the overfit? | 0.667 (7) | 0.664 | Less overfit, same AUC |
-| Loss weights 13:1 | Should the loss match the score's weights? | 0.679 (6) | 0.674 | Under the bar |
-| **Left-right flip** | Mirror the head and swap left/right labels: twice the examples per side | **0.686 (7)** | **0.681** | **Kept** |
-| Flip + backbone 0.3 x lr | Do the two gains stack? | 0.680 (9) | 0.680 | Below flip alone |
-| Flip + backbone 0.3 x + loss weights | Do three gains stack? | 0.672 (9) | 0.672 | Below flip alone |
-| Flip + positive weights | Do rare locations need more weight? | 0.681 (7) | 0.681 | Below flip alone |
+| Changed | Held constant | Result |
+|:--|:--|:--|
+| Score weights (Aneurysm Present 13, each location 1), tested on four parents | All other settings of each parent | −0.018, +0.009, −0.008, −0.020 |
+| Positive weights √(negatives / positives) per location, 3–10 | As above | −0.004, −0.004 |
 
-Findings:
+Uniform loss stays. With positive weights, validation loss rose from epoch 5 while training loss
+fell: the model memorized rare positives.
 
-- **Only the flip clears the bar:** +0.016 best, +0.014 final. Paired bootstrap: +0.016 (95% CI 0.006 to 0.027).
-- **The ImageNet weights matter,** not just the lower backbone rate: +0.026 over random init (95% CI 0.003 to 0.047).
-- **No stack beats the flip alone.** The +0.005 of backbone 0.3 x was noise.
-- **Overfitting is not the main limit.** Weight decay, more augmentation and a frozen start leave the AUC unchanged.
-- **Loss weighting does not help** (Oct 19 feedback). Score weights gave +0.009 alone and -0.008 on a stack.
-  Uniform BCE stays.
-- **Post-processing dropped:** multiplying each location by the Aneurysm Present probability gained +0.006 on
-  the reference but +0.002 on the flip run.
+<!-- wandb: e1 -->
 
-**Round 3: backbone, input size, learning rate.** All runs keep the flip at batch 4 x 2 (effective 8, so 160³
-fits on one card). Gain is against the parent in brackets. Source: `history.csv`.
+**E2 Initialization and backbone.** B2 sat at the scan-type floor; pretrained filters could start
+it from useful features.
 
-| Run (parent) | Change | Best (epoch) | Final | Gain best / final | Decision |
-|:--|:--|--:|--:|--:|:--|
-| Control (flip run) | Batch 4 x 2 | 0.684 (8) | 0.682 | -0.002 / 0.000 | Reference |
-| ResNet-34 (control) | Deeper ImageNet ResNet | 0.690 (8) | 0.688 | +0.006 / +0.006 | Small |
-| ResNet-50 (control) | Deeper; 1.9 x the epoch time | 0.688 (8) | 0.687 | +0.004 / +0.005 | Small |
-| r3d_18 (control) | Video ResNet-18 with Kinetics-400 weights | 0.698 (9) | 0.698 | +0.014 / +0.016 | **Kept** |
-| 160³ (control) | Whole scan resized to 160³ | 0.690 (9) | 0.690 | +0.006 / +0.008 | Kept |
-| r3d_18 160³ (r3d_18) | 160³ | 0.703 (9) | 0.703 | +0.005 / +0.005 | Kept |
-| + aug 0.1 (r3d_18 160³) | Augmentation probability 0.2 to 0.1 | 0.705 (9) | 0.705 | +0.002 / +0.002 | Kept |
-| Fix 1 (r3d_18 160³) | 1 mm head crop (below) | 0.704 (7) | 0.703 | +0.001 / 0.000 | Level |
-| Fix 1 + aug 0.1 (fix 1) | Augmentation probability 0.1 | 0.702 (7) | 0.699 | -0.002 / -0.004 | Lower |
-| **Fix 1 + aug 0.1 + lr x 2** (fix 1 + aug 0.1) | lr 6e-4 head, 6e-5 backbone | **0.711 (7)** | **0.708** | **+0.009 / +0.009** | **Best run** |
-| r3d_18 160³ + aug 0.1 + lr x 2 (+ aug 0.1) | lr x 2 without fix 1 | 0.701 (9) | 0.701 | -0.004 / -0.004 | Lower |
-| Best + batch 16 (best run) | Batch 16 x 1, lr 1.2e-3 (two changes) | stopped after epoch 2 | | -0.022 to -0.012 at epochs 0-2 | Dropped |
-| MLP head (ResNet-34; r3d_18; r3d_18 + aug 0.1) | 512-256-14 MLP: LayerNorm, ReLU, dropout 0.1 | 0.679; 0.693; 0.691 | | -0.011; -0.005; -0.010 | Dropped |
-| Aug 0.1 (ResNet-34; r3d_18) | Augmentation probability 0.1 | 0.694; 0.701 | 0.691; 0.700 | +0.004 / +0.003; +0.003 / +0.002 | Small |
+| Changed | Held constant | Result |
+|:--|:--|:--|
+| ImageNet ResNet-18 inflated to 3D, against random init | One learning rate | +0.017 (round 1) |
+| ImageNet against random init | Backbone at 0.1 × the head's rate for both | +0.026 (95% CI 0.003 to 0.047) |
+| Head only for the first epochs | ImageNet start | +0.014 (2 epochs, round 1); −0.002 (1 epoch) |
+| ResNet-34, ResNet-50 against ResNet-18 | ImageNet start, flip, batch 4 × 2 | +0.006, +0.004; ResNet-50 takes 1.9 × the time |
+| Kinetics-400 video ResNet r3d_18 [7] against ImageNet ResNet-18 | Flip, batch 4 × 2, 128³ | +0.014 |
 
-**Audit** (read-only, 11:50). No bug found (about 85% confident): metric, label order, flip pairs, folds and
-EMA check out. Main suspect: the cube resize ignores voxel spacing. Ceiling for this design: about 0.70-0.72.
-**Fix 1** resamples to 1 mm and cuts a 160 mm box on the head (Otsu mask), so the neck and table drop out of CTA.
+Starting weights gave the largest gains. Video weights beat deeper ImageNet ResNets. r3d_18 also
+has its own stem, so its weights and its layout are not separated.
 
-Findings (round 3):
+<!-- wandb: e2 -->
 
-- **Starting weights matter most.** Kinetics video weights beat every ImageNet ResNet; depth adds only +0.004
-  to +0.006. r3d_18 also has its own stem and no random-init run, so its weights and layout are not separated.
-- **160³ helps late:** within 0.003 of 128³ at epochs 3-5 on both backbones, ahead from epoch 6.
-- **Fix 1 learns faster, then ends level:** +0.010 to +0.013 at epoch 0. At lr 3e-4 and 10 epochs, the cube
-  resize is not confirmed as the limit.
-- **Twice the learning rate helped only on the head crop:** +0.009 at epochs 7-9 with fix 1, but -0.004 on
-  the resized cube. One fold and one seed each, so the split may be noise. Over the best old-rate run:
-  +0.006 / +0.003.
-- **No gain:** the MLP head (slow start: 0.53 vs 0.56-0.57 at epoch 0); aug 0.1 (sign mixed, noise level).
-- **In total:** +0.027 best, +0.026 final over the control. Only r3d_18 cleared 0.010 alone.
+**E3 Learning rate and batch size.** Pretrained filters need a gentler rate than a new head.
 
-![Fold-0 validation score per epoch for the round 3 path from the control to the best run](figures/checkpoint-round3-curves.png)
+| Changed | Held constant | Result |
+|:--|:--|:--|
+| Backbone at 0.1 × the head's rate, against one rate | ImageNet start | +0.038 (round 1); the first run below the scan-type floor |
+| Learning rate 1e-3 instead of 3e-4 | Random init, score weights | −0.003 (round 1, epoch 8); unstable, 0.47–0.49 at epochs 1–5 |
+| Backbone at 0.03 × instead of 0.1 × | ImageNet start | −0.004 |
+| Backbone at 0.3 × instead of 0.1 × | ImageNet start; flip run | +0.005; −0.005 |
+| Batch 4 × 2 accumulation instead of 8 | Effective batch 8 | −0.002, neutral; lets 160³ fit one 48 GB card |
+| Learning rate × 2 (head 6e-4, backbone 6e-5) | r3d_18 at 160³ | +0.009 with the head crop; −0.004 without |
+| Batch 16 at learning rate 1.2e-3 (two settings) | Best config | −0.012 to −0.022 at epochs 0–2; stopped |
 
-## 5 Behaviour analysis
+A 0.1 × backbone rate is kept. Twice the rate helped only with the head crop, on one seed, so the
+split may be noise. It stays because that run was the best on fold 0, and five folds confirmed the
+config as a whole (Section 4.4).
 
-Flip run (the best B2 when this analysis was made), fold 0, `best.pt`, 870 series. The final 5-fold run is
-in section 6.
+<!-- wandb: e3 -->
 
-**Learning curves (Figure 1).**
+**E4 Regularization.** ImageNet runs overfit after epoch 5: training loss fell from 0.164 to 0.103
+while validation loss rose.
 
-- Random init stays at the scan-type floor: validation loss 0.1873 after 19 epochs.
-- The ImageNet start drops below the floor at epoch 5 and reaches 0.1836 at epoch 6.
-- It then overfits. Over epochs 6-9, training loss falls 0.157 to 0.120 and validation loss rises 0.184 to 0.190.
-- The best epoch is 6 or 7 of 10 in every ImageNet run with the 0.1 x backbone rate.
-- The 30-epoch final run (section 6) peaks later: best epochs 8-12. Every fold early-stopped, after 13-15
-  epochs. Validation loss is lowest at epochs 7-9. After that, training loss keeps falling while validation
-  loss rises. The score flattens or slips, by up to 0.009.
+| Changed | Held constant | Result |
+|:--|:--|:--|
+| No augmentation | Random init, score weights | −0.112 (round 1, epoch 5); validation loss rises from epoch 3 |
+| Weight decay 0.05 instead of 0.01 | ImageNet reference | −0.000; no effect at these learning rates |
+| Augmentation probability 0.5 instead of 0.2 | ImageNet reference | −0.003; training loss 0.140 instead of 0.103 |
+| Augmentation probability 0.1 instead of 0.2 | Four parents | +0.004, +0.003, +0.002, −0.001 |
+| MLP head (512 → 256 → 14, LayerNorm, dropout 0.1) | Three parents | −0.011, −0.004, −0.010 (stopped after 9 epochs) |
 
-**Per label.**
+In these 10-epoch tests, less overfitting did not raise the AUC. The final run limits overfitting
+with early stopping on validation loss and best-epoch selection.
 
-![AUC per label for B1, the ImageNet reference and the flip run](figures/checkpoint-locations.png)
+<!-- wandb: e4 -->
 
-*Figure 3. AUC per label on fold 0, sorted by the flip run. Source: `oof.csv` of each run.*
+**E5 Input and augmentation.** Locations were the weak half (0.622 on the ImageNet reference), the
+left side weakest.
 
-- Aneurysm Present AUC is 0.722 (B1 0.660). Mean location AUC is 0.648 (B1 0.604).
-- The flip lifted left-side arteries most: Left ACA 0.47 to 0.59, Left infraclinoid ICA 0.58 to 0.66.
-- B1 still matches or beats the model on 3 of 13 locations: Left MCA, Anterior communicating, Basilar tip.
-- Rare labels are noisy: the two ACAs have 6-16 positives per fold (section 2).
+| Changed | Held constant | Result |
+|:--|:--|:--|
+| Left–right flip, probability 0.5, with left and right labels swapped | ImageNet reference | +0.016 (95% CI 0.006 to 0.027); location AUC 0.622 → 0.648 |
+| 160³ input instead of 128³ | ResNet-18; r3d_18 | +0.006; +0.005 |
+| 1 mm voxels and a 160 mm head crop instead of a resized cube | r3d_18 at 160³ | +0.001 best, +0.000 final; +0.010 to +0.013 at epochs 0–1 |
 
-**Per scan type.**
+The flip is the largest input gain: it doubles the examples per side. Finer whole-head input adds
+0.006 or less.
 
-![AUC within each scan type for B1 and the flip run](figures/checkpoint-scan-types.png)
+<!-- wandb: e5 -->
 
-*Figure 4. AUC within each scan type on fold 0. Within one type, B1 can only use age and sex. Source: `oof.csv`.*
+### 4.3 Path to the final baseline
 
-- **Angiography carries the signal.** Aneurysm Present AUC is 0.71 on CTA and 0.68 on MRA; B1 gets 0.57 on both.
-- **MRI adds nothing yet.** T2: 0.65 vs B1 0.70 (51 positives). T1post: 0.49 vs 0.57 (16 positives).
-- T2 slices sit 5 mm apart ([dataset.md](dataset.md)), so an aneurysm spans one or two slices.
-- Locations on MRA are near chance (0.54).
+![Fold-0 score of each kept step, and the five-fold result](figures/stage2-path.png)
 
-**Likely cause: resolution.**
+*Figure 3. (a) Best fold-0 score of each kept step; the r3d_18 step and later ones use batch 4 × 2 (neutral).
+B2 as proposed ran 19 epochs of a 30-epoch schedule; the other steps ran 10 epochs.
+(b) Out-of-fold score over all five folds; small dots are single folds.*
 
-| Measure after the 128³ resample | Median | 90th percentile |
+| Step | Fold-0 score | Change |
 |:--|--:|--:|
-| Voxel side | 1.8 mm | 3.0 mm |
-| Field of view | 230 mm | 388 mm |
+| B2 as proposed | 0.641 | |
+| ImageNet weights, backbone at 0.1 × the rate | 0.670 | +0.029 |
+| + left–right flip | 0.686 | +0.016 |
+| + Kinetics-400 r3d_18 (batch 4 × 2) | 0.698 | +0.012 |
+| + 160³ input | 0.703 | +0.005 |
+| + 1 mm head crop, then augmentation 0.1, then learning rate × 2 (three runs) | 0.711 | +0.008 |
 
-Source: the `b2-128` cache index. At 1.8 mm, a 5 mm aneurysm spans about 3 voxels. Most voxels lie outside
-the arteries.
+<!-- wandb: path -->
 
-## 6 Stage 3 direction
+### 4.4 Final baseline on five folds
 
-**Final B2 on five folds: done.**
-
-| Item | Value |
+| Item | Setting |
 |:--|:--|
-| Config | `configs/final/b2_final.yaml` (commit `d1a400c`): the best fold-0 tune run |
-| Model and input | r3d_18 with Kinetics-400 weights; 1 mm head crop at 160³; left-right flip; augmentation probability 0.1 |
-| Training | lr 6e-4 head, 6e-5 backbone; batch 4 x 2; up to 30 epochs; stop after 5 epochs without a lower validation loss |
-| Checkpoint | `best.pt` and `oof.csv` from the epoch with the highest validation score |
-| Tracking | W&B group `b2_final`, one run per fold: `b2_final-fold0` to `b2_final-fold4` |
-| Cost | About 6.1 L40S GPU-hours, in resumed 1 h jobs |
+| Config | `configs/final/b2_final.yaml`, commit `d1a400c` |
+| Model and input | r3d_18 with Kinetics-400 weights, 33.2 M parameters; 1 mm head crop at 160³ |
+| Training | Uniform BCE; AdamW, head 6e-4 and backbone 6e-5; batch 4 × 2; flip; augmentation 0.1; up to 30 epochs, early stop after 5 without a lower validation loss |
+| Checkpoint | EMA weights of the epoch with the best validation score (`best.pt`) |
+| Cost | 285 s per epoch on one L40S; 5.4 GPU-hours of epoch time for five folds |
 
-| Fold | Epochs run | Best epoch | Best validation score |
-|--:|--:|--:|--:|
-| 0 | 14 | 8 | 0.7075 |
-| 1 | 13 | 10 | 0.6823 |
-| 2 | 13 | 8 | 0.6854 |
-| 3 | 15 | 9 | 0.7105 |
-| 4 | 13 | 12 | 0.6942 |
-| Mean (sd) | | | 0.696 (0.013) |
-| Pooled out-of-fold, all 4,348 series | | | **0.688** |
+| Fold | Epochs run | Best epoch | Score | Aneurysm Present AUC | Mean location AUC |
+|--:|--:|--:|--:|--:|--:|
+| 0 | 14 | 8 | 0.707 | 0.741 | 0.672 |
+| 1 | 13 | 10 | 0.681 | 0.720 | 0.643 |
+| 2 | 13 | 8 | 0.684 | 0.698 | 0.670 |
+| 3 | 15 | 9 | 0.708 | 0.734 | 0.683 |
+| 4 | 13 | 12 | 0.693 | 0.709 | 0.678 |
+| Mean (sd) | | | 0.695 (0.013) | | |
+| **Pooled out of fold, 4,348 series** | | | **0.688** | **0.717** | **0.660** |
 
-Sources: each fold's `history.csv`; pooled score from `scripts/score_oof.py`, saved as `results/b2.json`.
+Scores come from each fold's `oof.csv`, which includes the 5–9 series per fold that fail
+preprocessing. `history.csv` skips them and reads up to 0.003 higher.
 
-![Validation score per epoch for the five folds of the final B2 run, with each fold's best epoch marked](figures/final-5fold-curves.png)
+| Model | Score | Aneurysm Present AUC | Mean location AUC |
+|:--|--:|--:|--:|
+| B1 metadata | 0.640 | 0.672 | 0.609 |
+| **Final B2** | **0.688** | **0.717** | **0.660** |
+| Difference (paired bootstrap 95% CI) | +0.048 (0.035 to 0.062) | +0.045 (0.029 to 0.061) | +0.051 (0.035 to 0.069) |
 
-*Figure 5. Final B2, validation score per epoch on each fold. The large dot is the best epoch, which gives
-`best.pt` and `oof.csv`. Each line ends where early stopping ended that fold. Source: `history.csv` of each fold.*
+On fold 0 the 30-epoch run scores 0.707, against 0.711 in its 10-epoch screen: the schedule
+differs, and `oof.csv` includes the prior-filled series. The bootstrap resamples the 4,348 series
+2,000 times; no resample puts B2 at or below B1. Sources:
+`results/b1.json`, `results/b2.json`, `results/b2_diagnostics.json`.
 
-- **Five folds confirm the image signal.** Pooled score 0.688 vs B1 0.640 (+0.048). Aneurysm Present AUC
-  is 0.717 (B1 0.672); mean location AUC is 0.660 (B1 0.609).
-- **The pooled score sits below the per-fold mean** (0.688 vs 0.696). Pooling ranks the predictions of five
-  different models together, so small shifts between models cost AUC.
-- **Folds differ.** Folds 1 and 2 score about 0.68; folds 0 and 3 about 0.71. This spread is larger than most
-  single Stage 2 steps (0.002-0.006, section 4). Fold 0, the tuning fold, is not the top fold.
-- **Strongest locations:** Right posterior communicating 0.757, Left posterior communicating 0.755, Left ACA
-  0.743.
-- **Weakest locations:** Other posterior circulation 0.579, Left infraclinoid ICA 0.585, Right infraclinoid
-  ICA 0.619.
-- **B2 beats B1 on all 13 locations,** but by less than 0.01 on four: Right infraclinoid ICA, Left MCA,
-  Anterior communicating, Right ACA. Source: `results/b1.json`, `results/b2.json`.
-- **Rare labels stay noisy.** Left ACA was 0.59 for the flip run on fold 0 and is 0.743 here, with 8-11
-  positives per fold.
-- **Every fold early-stopped** after 13-15 epochs, with best epochs 8-12 (section 5).
+<!-- wandb: final -->
 
-| Finding | What it implies |
+## 5 Generalization and diagnostics
+
+### 5.1 Learning curves
+
+![Validation score and loss per epoch for the five folds of the final B2](figures/final-curves.png)
+
+*Figure 4. Final B2, five folds. (a) Validation score; the large dot marks `best.pt`. (b)
+Validation loss (solid) and training loss (dashed). Source: `history.csv` of each fold.*
+
+- **Convergence.** On fold 0, validation loss falls below the scan-type floor at epoch 4. On every
+  fold it is lowest at epochs 7–9 (0.180–0.185).
+- **Overfitting after epoch 9.** Training loss keeps falling, from about 0.17 to 0.12–0.14, while
+  validation loss rises to 0.189–0.199. Early stopping ended every fold after 13–15 epochs.
+- **Little cost to the score.** The score peaks at epochs 8–12 and slips by at most 0.010 after.
+  This matches E4: regularization moved the loss, not the AUC.
+
+### 5.2 Stability
+
+- **Folds differ by 0.027** (0.681–0.708, sd 0.013), more than most single Stage 2 steps. B1
+  varies as much (sd 0.013), so the spread comes from the folds, not the model. Future changes are
+  judged on five folds, not fold 0 alone.
+- **The tuning gain transfers, with some optimism.** Folds 1–4 played no part in tuning and average
+  0.692, against 0.707 on fold 0.
+- **The pooled score sits below the fold mean** (0.688 against 0.695). Pooling ranks the outputs
+  of five models together; a likely cause is small calibration shifts between them (untested).
+
+### 5.3 Per label
+
+![AUC per label for B1 and the final B2, five folds](figures/final-per-label.png)
+
+*Figure 5. AUC per label over all 4,348 series; positive series in brackets. Source:
+`results/b1.json`, `results/b2.json`.*
+
+- **B2 beats B1 on all 14 labels,** but by less than 0.01 on four: Right ACA, Right infraclinoid
+  ICA, Left MCA and Anterior communicating.
+- **Strongest:** both posterior communicating arteries (0.757, 0.755) and Left ACA (0.743).
+- **Weakest:** Other posterior circulation (0.579) and Left infraclinoid ICA (0.585).
+- **Rare labels are noisy.** Left ACA has 46 positives in total, 8–11 per fold.
+
+### 5.4 Per scan type
+
+![AUC within each scan type for B1 and the final B2](figures/final-scan-types.png)
+
+*Figure 6. AUC within each scan type over all five folds. Within one type, B1 can use only age and
+sex. Source: `results/b2_diagnostics.json`.*
+
+- **B2 beats B1 within every scan type,** on both halves of the score, so its gain does not come
+  from scan type alone. The one exception in size is MRI T2 locations (below).
+- **Within-type AUCs sit below the pooled ones.** Pooled AUCs also rank across scan types, whose
+  base rates differ (54% positive on CTA, 26% on MRI T2).
+- **CTA is strongest** (Aneurysm Present 0.715). **MRI T2 is weakest** (0.625; locations 0.567
+  against 0.560 for B1, within noise). T2 slices sit 5 mm apart ([dataset.md](dataset.md)), so an
+  aneurysm spans one or two slices.
+
+### 5.5 Beyond AUC: operating point and calibration
+
+| Aneurysm Present, out of fold | Threshold | Sensitivity | Specificity | PPV | NPV | F1 |
+|:--|--:|--:|--:|--:|--:|--:|
+| B2 at the Youden point | 0.41 | 0.682 | 0.652 | 0.595 | 0.732 | 0.636 |
+| B2 at sensitivity 0.90 | 0.20 | 0.900 | 0.311 | 0.495 | 0.806 | 0.639 |
+| B1 at the Youden point | 0.44 | 0.662 | 0.613 | 0.562 | 0.707 | 0.608 |
+| B1 at sensitivity 0.90 | 0.28 | 0.902 | 0.276 | 0.483 | 0.790 | 0.629 |
+
+Confusion counts for B2 at the Youden point: 1,271 true positives, 866 false positives, 1,619 true
+negatives, 592 false negatives.
+
+![Calibration of the Aneurysm Present probability for B1 and the final B2](figures/final-calibration.png)
+
+*Figure 7. Observed share of aneurysm series against the mean predicted probability, in 10
+equal-count bins. Source: `results/b2_diagnostics.json`.*
+
+- **B2 finds 68% of aneurysm series and clears 65% of the others** at its best balanced threshold.
+- **It is not a screening tool yet.** To catch 90% of aneurysm series it flags 69% of the rest.
+- **Probabilities are too extreme.** The lowest bin predicts 0.068 against 0.186 observed; the
+  highest predicts 0.843 against 0.781. B2 has the better Brier score (0.213 against 0.223) but the
+  worse calibration error (ECE 0.049 against 0.029). AUC ignores this; any reported threshold needs
+  calibrated probabilities.
+
+### 5.6 Where the model looks
+
+![Grad-CAM for Aneurysm Present on one held-out positive per scan type](figures/final-gradcam.png)
+
+*Figure 8. Grad-CAM [10] for Aneurysm Present. One held-out positive per scan type: the most
+confident correct positive whose aneurysm lies inside the crop, read by the fold model that never
+trained on it. Top: 5 mm axial slab. Bottom: Grad-CAM overlay. Ring: the expert's aneurysm point.
+Source: `scripts/gradcam_examples.py`.*
+
+| Pointing test: 1,835 held-out positives | Grad-CAM peak | Random head voxel | Mean aneurysm position |
+|:--|--:|--:|--:|
+| Within 20 mm of the expert's point | 1.7% | 1.9% | 39.6% |
+| Median distance | 103 mm | n/a | 23 mm |
+
+- **The evidence does not sit on the aneurysm.** The Grad-CAM peak lands near the expert's point
+  as rarely as a random voxel in the head. A single fixed point does twenty times better.
+- **Even confident, correct calls look elsewhere:** frontal bone and orbits on CTA, anterior vessels
+  on MRA, a weak diffuse map on T2.
+- **Caveat:** the last stage is a 20 × 10 × 10 grid (cells of about 8 × 16 × 16 mm), so the maps
+  are coarse. Coarse maps can still point to the right region; these do not.
+- **Implication:** B2's evidence for an aneurysm comes mostly from outside it. This is the strongest
+  case for arm A, which removes most of the head from the input.
+
+### 5.7 What the diagnostics decide
+
+| Finding | Decision |
 |:--|:--|
-| The model finds aneurysms on CTA and MRA (section 5) | The pipeline works |
-| Starting weights gave the largest gains (section 4) | The start point matters more than loss, head or regularization |
-| 160³ and the 1 mm head crop add 0.005 or less at the final epoch | Finer whole-head input alone is not enough |
-| Audit ceiling about 0.70-0.72; best fold-0 run 0.711; final per-fold mean 0.696 | More tuning of the whole-scan classifier has low value |
-| Locations stay weak (5-fold 0.660; MRA near chance on fold 0) | The model needs a signal for where the arteries are |
-| Fold spread (0.682-0.710) is larger than most tuning steps | Judge future changes on 5 folds, not fold 0 alone |
+| Locations trail Aneurysm Present (0.660 against 0.717) | Stage 3 targets locations: the model must see the arteries in detail |
+| Grad-CAM peaks fall near the aneurysm no more often than chance (5.6) | Arm A restricts the input to the vessel region; the pointing test is repeated on arm A |
+| Finer whole-head input added 0.006 or less (E5) | More voxels of the whole head do not help; more voxels of the vessel region may |
+| Starting weights gave the largest gains (E2) | Arm A keeps the Kinetics-400 r3d_18 and the final recipe; only the input changes |
+| Overfitting costs little AUC (5.1, E4) | No new regularization; keep early stopping and best-epoch selection |
+| The gain holds within every scan type; MRI T2 is weakest (5.4) | Report arm A per scan type; T2 tests whether finer crops help thick slices |
+| Probabilities are overconfident at both ends (5.5) | Calibrate on out-of-fold predictions before any threshold is reported |
+| Fold spread exceeds most tuning steps (5.2) | Judge arm A on five folds with a paired bootstrap against B2 |
 
-Direction:
-
-1. **B2 is done on 5 folds** (above). Next: ensemble the 5 fold models for Kaggle.
-2. **Stage 3: arm A (proposal Section 5).** A 2D detector (YOLOv8n) on sagittal and coronal MIPs finds the
-   vessel region. The classifier reads it with finer voxels than the 1 mm head crop. Candidate addition, not
-   in the proposal: the competition's aneurysm localizer points as extra training targets. Arm B stays a
-   stretch goal.
-
-Gates before Stage 3:
-
-1. Confirm the final config on folds 1-4. **Done:** 0.688 on 5 folds vs B1 0.640. This confirms the config
-   as a whole; each Stage 2 step's own gain is still fold-0 only. The paired bootstrap against B1 on 5 folds
-   is not yet run.
-2. Run seeds 1 and 2 of the final config to measure the seed spread.
-3. Score its `oof.csv` and repeat section 5. **Scored** (`results/b2.json`; per-label AUCs above). The
-   per-scan-type view on 5 folds is still to do.
-
-Compute so far: about 24 GPU-hours, mostly L40S. The 36 fold-0 runs took about 18 (`history.csv` timings).
-The final 5-fold run took about 6.1 L40S-hours, at about 4.8 minutes per epoch (253 s training + 32 s
-validation). That is above the earlier 4-hour estimate because each fold ran 13-15 epochs, not 10. All of it
-sits well inside the proposal's budget.
-
-## 7 Limitations
+### 5.8 Limits of this evidence
 
 | Limit | Effect |
 |:--|:--|
-| Tuned on fold 0 | Stage 2 steps were chosen on fold 0. The final config is confirmed on 5 folds as a whole (0.688 vs B1 0.640); each step's own gain is still fold-0 only. |
-| One seed per run | Seed spread is unmeasured. The paired bootstrap's 95% CI for two related runs spans about ±0.010 (flip vs reference), so most round 3 steps (0.002-0.006) are within noise. Fold spread is now measured: sd 0.013 across the 5 folds (0.682-0.710). |
-| Config and epoch chosen on the scored fold | 36 runs share one validation set, so the best score is optimistic. The final run also picks each fold's best epoch on that fold. Folds 1-4 played no part in tuning: their mean is 0.693, against 0.707 on fold 0. |
-| 10-epoch protocol | Favors fast learners (random init still rising at epoch 9); lr x 2 helped on the head crop and not on the cube. The final config ran on the 30-epoch schedule: every fold early-stopped after 13-15 epochs, best epochs 8-12. |
-| Bootstrap covers validation sampling only | It ignores seed noise and epoch selection. |
-| 37 series fail preprocessing | They get the label prior (7 in fold 0). `history.csv` scores skip them and read up to 0.003 higher than `oof.csv`. |
-| No patient key | The same patient across different visits cannot be linked. |
-| 532 series lack FrameOfReferenceUID | Each is its own group, so leakage is possible among them. |
-| Rare locations | Per-location AUCs are noisy (see thin cells, section 2). |
-| Scan type confounds the label | B1 gains from scan type; Figure 4 checks the image model within each scan type. |
+| Tuned on fold 0, one seed per run | Most steps of 0.002–0.006 sit inside the ±0.010 noise band. The five-fold run confirms the config as a whole, not each step. |
+| Best epoch chosen on the scored fold | OOF scores are slightly optimistic, the same way for every model. |
+| 10-epoch screening | Favors fast learners; random init was still rising at epoch 9. |
+| No patient key | The same patient across visits cannot be linked. 532 series lack FrameOfReferenceUID and form their own groups. |
+| 37 series fail preprocessing | They receive the label prior; `history.csv` scores skip them and read up to 0.003 high. |
+| Orientation of a few volumes | A mirror-symmetry check flags 53 of 4,311 cached volumes whose axes may be swapped. The check is a heuristic; the series are not yet verified one by one. |
+| Scan type confounds the label | Pooled AUCs include ranking across scan types; within-type scores are 0.596–0.671 (Section 5.4). |
+
+## 6 Challenges and mitigation
+
+| Challenge | Effect on the project | Response | Worked? | Still needed |
+|:--|:--|:--|:--|:--|
+| Data scale: 311 GB of DICOM, four scan types | Preprocessing is the slowest step | Resumable CPU jobs in 1-hour pieces; cached volumes; one index of every failure | Yes: 4,311 of 4,348 cached | A new crop cache for arm A |
+| No patient identifier | Train and validation could share a patient | FrameOfReferenceUID groups 1,511 series into 672 sessions | Partly: 532 series lack the tag | Compare the five-fold and Kaggle scores |
+| Orientation of stripped multi-frame MR | Left and right labels could flip | Assumed axes checked against the true orientation | Yes: 322 of 322 match | Verify the 53 volumes a symmetry check flags (Section 5.8) |
+| B2 stuck at the scan-type floor | The proposed baseline only matched metadata | Diagnosed with the floor loss; pretrained start and a lower backbone rate | Yes: +0.07 on fold 0 | None |
+| Small gains against run noise | One-seed gains of 0.002–0.006 cannot be trusted | +0.010 keep rule, paired bootstrap, five-fold confirmation | Partly | Seed replicates of the final config |
+| GPU queues and limits | H200 waits of hours; 1-hour limit and 2 running jobs on the open partition | L40S cards in resumable 1-hour pieces; any free GPU type | Yes: 26 GPU-hours, no lost run | None |
+| Scratch purges | Monthly deletion on /scratch | Purge dates checked by the submit script; results committed as aggregates | Partly: the final run overlapped the November window by choice | Copy finalist weights off /scratch before December 1 |
+
+## 7 Reflection and forward plan
+
+### 7.1 Reflection
+
+The proposed baseline matched metadata, and its validation loss sat at the scan-type floor. That
+diagnosis set the course of Stage 2: the network had to learn something beyond the scan type
+before any tuning could matter.
+
+Four changes gave most of the gain. Pretrained weights beat random init by 0.026 at the same
+learning rates. A backbone rate of 0.1 × the head's added 0.038 in round 1. The left–right flip
+with label swap added 0.016. The Kinetics-400 video ResNet added 0.014 over ImageNet ResNet-18;
+its stem also differs, so weights and layout are not separated. Loss weighting and regularization
+did not move the score. Score-weighted loss lost in three of four tests, which answers the
+instructor's question with evidence.
+
+The returns from tuning the whole-head design are falling. The last two steps added 0.013 on
+fold 0, and finer whole-head input added at most 0.006. These are single-seed results, so the
+limit is a judgment, not a measurement. Location AUC (0.660) still trails Aneurysm Present (0.717)
+by 0.057.
+
+Open problems remain. Seed spread is unmeasured, and each step's gain rests on one fold. MRI T2 is
+the weakest scan type, and the probabilities are overconfident at both ends (Section 5).
+
+### 7.2 Stage 3 direction: arm A
+
+**Arm A reads the vessel region, not the whole head.** A 2D detector on sagittal and coronal
+maximum-intensity projections (MIPs) finds a 3D box around the circle of Willis [5]. A 120 mm cube
+around that box is resampled to 160³. Voxels shrink from 1 mm to 0.75 mm, and most of the head
+outside the arteries is cut away.
+
+Why this direction fits the evidence (Section 5.7):
+
+- **Locations are the weak half** of the score, and locating an aneurysm needs detail at the
+  arteries.
+- **The model does not look at the aneurysm.** Grad-CAM peaks fall near it at chance rate (5.6).
+- **More whole-head detail stopped paying:** 160³ and the 1 mm crop added at most 0.006 (E5).
+- **The recipe carries over.** Arm A keeps the Kinetics-400 r3d_18, the loss, the schedule and the
+  folds. The change is confined to the input: its region, field of view and voxel size. The
+  detector is the one new component, and its box recall is measured on its own.
+- **It is feasible.** A five-fold run costs about 5.4 GPU-hours of epoch time; the detector about
+  1 hour.
+
+Arm B (vessel-guided pooling on a vessel-pretrained encoder) remains a stretch goal.
+
+### 7.3 Remaining work and schedule
+
+| Week | Work | Done when |
+|:--|:--|:--|
+| 9 (Nov 4–10) | Box labels from the 178 vessel masks; MIP detector | The box holds at least 95% of the 2,254 expert aneurysm points on held-out folds |
+| 10 (Nov 11–17) | Crop cache; arm A on fold 0 against the final B2 | One fold-0 result |
+| 11 (Nov 18–24) | Arm A on five folds; feature freeze | Paired bootstrap against B2 on all 4,348 series |
+| 12 (Nov 25–Dec 1) | Diagnostics for arm A; seeds 1 and 2 of the better model | Seed spread measured |
+| 13 (Dec 2–8) | Kaggle late submission of B2 and arm A, once | Private and public scores recorded |
+| 14–15 (Dec 9–20) | Ethics presentation; final notebook and demo | Submitted |
+
+Muhammad Obaidullah owns all remaining work. Meetings 4 and 5 (W&B report, Section 2) review the
+arm A result before the feature freeze and the final deliverables. Work runs as one-change
+experiments on the shared folds, tracked in W&B; each week ends with a committed result and an
+updated report.
+
+## References
+
+1. RSNA, "RSNA Intracranial Aneurysm Detection," Kaggle, 2025.
+2. M. Correia de Verdier et al., "The RSNA Intracranial Aneurysm (RSNA-ICA) Dataset," arXiv:2610.01135, 2026.
+3. K. Hara, H. Kataoka and Y. Satoh, "Can spatiotemporal 3D CNNs retrace the history of 2D CNNs and ImageNet?" CVPR, 2018.
+4. P. Shi et al., "Intracranial aneurysm classification and segmentation via tri-axial ROI and multi-task learning," arXiv:2606.26706, 2026. Masks under CC BY-NC 4.0.
+5. YYama, TmT, nmst, D. Nagao and bbscience, "3rd place solution," RSNA Intracranial Aneurysm Detection, Kaggle writeup, 2025.
+6. M. J. Cardoso et al., "MONAI: An open-source framework for deep learning in healthcare," arXiv:2211.02701, 2022.
+7. D. Tran et al., "A closer look at spatiotemporal convolutions for action recognition," CVPR, 2018.
+8. W. Kay et al., "The Kinetics human action video dataset," arXiv:1705.06950, 2017.
+9. I. Loshchilov and F. Hutter, "Decoupled weight decay regularization," ICLR, 2019.
+10. R. R. Selvaraju et al., "Grad-CAM: Visual explanations from deep networks via gradient-based localization," ICCV, 2017.

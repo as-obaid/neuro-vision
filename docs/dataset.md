@@ -67,14 +67,21 @@ fold, so their AUCs are noisy.
 
 ## Model input
 
-Each series is resampled to 128³ voxels in RAS orientation, clipped at its 0.5th and 99.5th
-percentiles and z-scored. 4,311 series pass. The other 37 fail a geometry check, mostly mixed
-orientation or slice gaps; they are left out of training and receive the label prior at prediction.
+Each series passes a geometry check, is reoriented to RAS, clipped at its 0.5th and 99.5th
+percentiles and z-scored. 4,311 series pass. The other 37 fail the check, mostly mixed orientation
+or slice gaps; they are left out of training and receive the label prior at prediction.
+
+| Version | Resampling | Voxel side | Used by |
+|:--|:--|:--|:--|
+| Cube | Whole scan resized to 128³ (or 160³) | Median 1.8 mm, 90th percentile 3.0 mm at 128³ | B2 as proposed; most Stage 2 runs |
+| Head crop | 1 mm voxels, then a 160 mm box on the head (Otsu mask), 160³ | 1.0 mm | Tuned B2 |
+
+The head crop keeps physical scale fixed across scanners and drops the neck and table from CTA.
 
 ![The MRA series after preprocessing](figures/dataset-model-input.png)
 
-*Figure 3. The MRA series from Figure 1 after preprocessing (maximum-intensity projections). The 13
-location labels name segments of this arterial tree.*
+*Figure 3. The MRA series from Figure 1 after the 128³ cube resample (maximum-intensity
+projections). The 13 location labels name segments of this arterial tree.*
 
 ## Labels and splits
 
@@ -83,7 +90,7 @@ location labels name segments of this arterial tree.*
   (`data/manifests/labels.yaml`).
 - **Folds.** Five folds, stratified by Aneurysm Present × scan type and grouped by
   FrameOfReferenceUID, so series from one scanning session share a fold
-  ([check-point §2](check-point.md#2-splits-and-leakage); `data/manifests/folds.yaml`).
+  ([checkpoint, Section 3.2](check-point.md#32-splits); `data/manifests/folds.yaml`).
 
 ## Sources and access
 
