@@ -264,7 +264,7 @@ B2 as proposed ran 19 epochs of a 30-epoch schedule; the other steps ran 10 epoc
 
 | Item | Setting |
 |:--|:--|
-| Config | `configs/final/b2_final.yaml`, commit `d1a400c` |
+| Config | `configs/final/b2_final.yaml`, commit `c8a69e2` |
 | Model and input | r3d_18 with Kinetics-400 weights, 33.2 M parameters; 1 mm head crop at 160³ |
 | Training | Uniform BCE; AdamW, head 6e-4 and backbone 6e-5; batch 4 × 2; flip; augmentation 0.1; up to 30 epochs, early stop after 5 without a lower validation loss |
 | Checkpoint | EMA weights of the epoch with the best validation score (`best.pt`) |
