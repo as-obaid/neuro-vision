@@ -489,10 +489,10 @@ Arm B (vessel-guided pooling on a vessel-pretrained encoder) remains a stretch g
 | 13 (Dec 2–8) | Kaggle late submission of B2 and arm A, once | Private and public scores recorded |
 | 14–15 (Dec 9–20) | Ethics presentation; final notebook and demo | Submitted |
 
-Muhammad Obaidullah owns all remaining work. Meetings 4 and 5 (W&B report, Section 2) review the
-arm A result before the feature freeze and the final deliverables. Work runs as one-change
-experiments on the shared folds, tracked in W&B; each week ends with a committed result and an
-updated report.
+Muhammad Obaidullah owns the modeling work; Pichpisey Piseth supports research and prepares the
+final report and notebook. Meetings 4 and 5 (W&B report, Section 2) review the arm A result before
+the feature freeze and the final deliverables. Work runs as one-change experiments on the shared
+folds, tracked in W&B; each week ends with a committed result and an updated report.
 
 ## References
 
