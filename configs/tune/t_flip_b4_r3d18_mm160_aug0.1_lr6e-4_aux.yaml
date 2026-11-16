@@ -1,0 +1,4 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4.yaml
+# Run 2a: a location-map head on layer3 learns a 5 mm ball around each expert point
+# (balanced BCE, weight 1.0 next to the classification BCE). From the 1st-place solution.
+train: {aux_map_weight: 1.0}

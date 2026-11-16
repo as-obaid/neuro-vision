@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# AP weighs 13 and each location 1, as in the score; on a model that now fits, does matching the score's weights raise the AP AUC?
+train: {loss_weights: competition}

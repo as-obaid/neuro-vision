@@ -1,0 +1,4 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4_aux_cos30.yaml
+# Run 2a-cos30 (r3d_18, fold 0 0.763) with the backbone swapped for MONAI's SwinUNETR encoder and
+# its self-supervised CT weights; the map head reads the stride-8 features.
+train: {backbone: swinunetr, init: ssl}

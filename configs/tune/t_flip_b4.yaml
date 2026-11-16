@@ -1,0 +1,3 @@
+extends: t_flip.yaml
+# Control for the batch change: batch 4 with 2 accumulation steps keeps the effective batch at 8.
+train: {batch_size: 4, accum_steps: 2}

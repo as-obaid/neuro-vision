@@ -1,0 +1,31 @@
+{
+  "source": "scripts/scan_headers.py, Slurm job 11556863, 2026-11-01",
+  "series_scanned": 4348,
+  "errors": 0,
+  "grouping_candidates": {
+    "PatientID": {"distinct": 4348, "empty": 0, "shared_values": 0, "largest_group": 1},
+    "StudyInstanceUID": {"distinct": 4348, "empty": 0, "shared_values": 0, "largest_group": 1},
+    "FrameOfReferenceUID": {
+      "distinct": 2977,
+      "empty": 532,
+      "shared_values": 672,
+      "series_in_shared_values": 1511,
+      "largest_group": 5,
+      "shared_values_with_consistent_sex_and_age": 672
+    },
+    "StudyDate": {
+      "distinct": 2090,
+      "empty": 373,
+      "shared_values": 876,
+      "series_in_shared_values": 2761,
+      "largest_group": 316,
+      "shared_values_with_consistent_sex_and_age": 528
+    }
+  },
+  "orientation_source": {
+    "top_level": 4026,
+    "per_frame_only": 322,
+    "neither": 0,
+    "note": "from tag presence in headers.csv; the cache index records the source used"
+  }
+}

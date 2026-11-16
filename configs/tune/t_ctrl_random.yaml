@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# Control: random weights with the same two learning rates (head 3e-4, backbone 0.1 x lr).
+train: {init: random}

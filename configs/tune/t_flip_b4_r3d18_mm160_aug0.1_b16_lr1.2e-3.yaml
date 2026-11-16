@@ -1,0 +1,4 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4.yaml
+# Push the winning rate again: batch 16 in one pass (BatchNorm sees 16) with the rate doubled to 1.2e-3
+# (backbone 1.2e-4); per-scan step stays as at batch 8, lr 6e-4. About 27 GB at 160-cubed.
+train: {batch_size: 16, accum_steps: 1, lr: 1.2e-3}

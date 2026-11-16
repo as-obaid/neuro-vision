@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# Backbone learning-rate scale 0.3 (backbone 9e-5, head 3e-4): is 0.1 too cautious?
+train: {backbone_lr_scale: 0.3}

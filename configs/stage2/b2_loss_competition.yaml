@@ -1,0 +1,3 @@
+extends: ../base/b2.yaml
+# Aneurysm Present is half the score but 1/14 of a uniform loss; weight it as the score does.
+train: {loss_weights: competition}

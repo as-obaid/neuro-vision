@@ -1,0 +1,6 @@
+extends: b2_aux_final.yaml
+# Step 1 of the vessel plan on 5 folds: b2_aux_final (30 epochs, cosine over 30, early stop after 5,
+# map head) started from the encoder of the vessel pretraining run vessel_r3d18_160_v2 (r3d_18 U-Net
+# on the 27 Shi classes with the multi-frame masks mapped by voxel index, same fold's training
+# series, from Kinetics) instead of the Kinetics weights. One change: the starting weights.
+train: {init: vessel, vessel_run: vessel_r3d18_160_v2}

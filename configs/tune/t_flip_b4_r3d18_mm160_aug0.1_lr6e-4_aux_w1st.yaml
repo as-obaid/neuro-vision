@@ -1,0 +1,4 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4_aux.yaml
+# Run 2b: 2a with the 1st-place loss weights: 0.1 x mean location BCE + 0.05 x Aneurysm Present
+# BCE + 1.0 x map loss.
+train: {loss_weights: first_place}

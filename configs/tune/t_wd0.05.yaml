@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# Weight decay 0.05 (from 0.01): stronger regularization.
+train: {weight_decay: 0.05}

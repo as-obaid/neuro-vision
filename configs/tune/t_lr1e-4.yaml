@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# Base lr 1e-4 (head 1e-4, backbone 1e-5): both rates divided by 3.
+train: {lr: 1.0e-4}

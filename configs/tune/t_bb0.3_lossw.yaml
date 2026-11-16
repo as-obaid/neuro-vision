@@ -1,0 +1,3 @@
+extends: t_bb0.3.yaml
+# Stack the score's loss weights on the best backbone rate.
+train: {loss_weights: competition}

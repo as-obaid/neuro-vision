@@ -1,0 +1,4 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4.yaml
+# MLP head 512 -> 256 -> 14 with LayerNorm, ReLU and dropout 0.1 on the best tune run (1 mm head crop
+# at 160, augmentation 0.1, lr 6e-4 head / 6e-5 backbone, 10 epochs). Earlier MLP tests ran on 128-cubed at lr 3e-4.
+train: {head: mlp}

@@ -1,0 +1,3 @@
+extends: t_flip_b4_r3d18.yaml
+# Stack the two winners: Kinetics r3d_18 at 160-cubed input (r3d_18 used 7.3 GB at 128, batch 4).
+train: {input_size: 160}

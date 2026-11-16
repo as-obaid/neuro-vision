@@ -1,0 +1,17 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4_aux_cos30.yaml
+# Full version (1st-place style) against run 2a-cos30 (fold 0 0.763) and step 1:
+# - input: a 96 mm cube of 0.5 mm voxels (192^3) around the vessel tree the step-1 U-Net predicts,
+#   cut from the DICOM (cache vbox05-192, scripts/build_vessel_box_cache.py);
+# - network: the whole step-1 U-Net (encoder and decoder), which keeps learning the 27 Shi
+#   classes (seg_weight: DiceCE next to the classification BCE);
+# - readout: each artery's predicted mask averages the decoder features into that artery's
+#   logit; Aneurysm Present reads the union of the masks and layer4 (models/vessel_readout.py);
+# - the voxel-level aneurysm classes replace the location-map head.
+train:
+  backbone: r3d18_unet
+  init: vessel
+  vessel_run: vessel_r3d18_160
+  resample: vbox
+  input_size: 192
+  aux_map_weight: null
+  seg_weight: 1.0

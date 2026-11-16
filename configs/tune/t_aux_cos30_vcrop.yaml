@@ -1,0 +1,5 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4_aux_cos30.yaml
+# Run 2a-cos30 (fold 0 0.763) on the same 1 mm 160 mm crop re-centred on the vessel tree the
+# step-1 U-Net predicts (cache vc1mm-160: cut from the DICOM, `scripts/build_vessel_box_cache.py
+# --spacing 1.0 --size 160`), instead of the head box whose top sits just above the skull.
+train: {resample: vcrop}

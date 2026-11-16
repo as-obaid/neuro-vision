@@ -1,0 +1,4 @@
+extends: ../tune/t_flip_b4_r3d18_mm160_aug0.1_lr6e-4.yaml
+# Final B2: the best fold-0 tune run (r3d_18 Kinetics, 1 mm head crop at 160, flip, aug 0.1, lr 6e-4,
+# batch 4 x 2) on the base schedule: 30 epochs, early stop after 5 epochs without a lower val loss.
+train: {epochs: 30, early_stop_patience: 5}

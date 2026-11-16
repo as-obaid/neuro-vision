@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# Augmentation probability 0.5 (from 0.2): each of the four random transforms fires more often.
+augment: {prob: 0.5}

@@ -1,0 +1,3 @@
+extends: t_r0.yaml
+# Mirror the head left-right half the time and swap the paired L/R labels, doubling examples per side.
+augment: {flip_lr: 0.5}

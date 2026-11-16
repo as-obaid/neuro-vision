@@ -1,0 +1,4 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4_aux.yaml
+# Run 2a with the cosine stretched over 30 epochs (the b2_final schedule), stopped after 10:
+# the learning rate at epoch 9 is 4.7e-4 instead of 0.
+train: {schedule_epochs: 30}

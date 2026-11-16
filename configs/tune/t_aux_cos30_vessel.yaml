@@ -1,0 +1,5 @@
+extends: t_flip_b4_r3d18_mm160_aug0.1_lr6e-4_aux_cos30.yaml
+# Step 1 of the vessel plan: run 2a-cos30 (fold 0 0.763) started from the encoder of the vessel
+# pretraining run (r3d_18 U-Net on the 27 Shi classes, same fold's training series, from Kinetics)
+# instead of the Kinetics weights.
+train: {init: vessel, vessel_run: vessel_r3d18_160}

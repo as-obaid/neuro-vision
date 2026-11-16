@@ -1,0 +1,56 @@
+imagenet_resnet18:
+  source: torchvision ResNet18_Weights.IMAGENET1K_V1
+  url: https://download.pytorch.org/models/resnet18-f37072fd.pth
+  file: weights/resnet18-f37072fd.pth
+  sha256: f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec
+  retrieved: 2026-11-02
+  use: inflated to 3D for configs with train.init imagenet (src/neurovision/models/resnet3d.py)
+imagenet_resnet34:
+  source: torchvision ResNet34_Weights.IMAGENET1K_V1
+  url: https://download.pytorch.org/models/resnet34-b627a593.pth
+  file: weights/resnet34-b627a593.pth
+  sha256: b627a593bcbe140c234610266fe4f8ae95ea42fc881d091c9b6052e6b1d0590f
+  retrieved: 2026-11-02
+  use: inflated to 3D for configs with train.backbone resnet34 and train.init imagenet (src/neurovision/models/resnet3d.py)
+imagenet_resnet50:
+  source: torchvision ResNet50_Weights.IMAGENET1K_V1
+  url: https://download.pytorch.org/models/resnet50-0676ba61.pth
+  file: weights/resnet50-0676ba61.pth
+  sha256: 0676ba61b6795bbe1773cffd859882e5e297624d384b6993f7c9e683e722fb8a
+  retrieved: 2026-11-02
+  use: inflated to 3D for configs with train.backbone resnet50 and train.init imagenet (src/neurovision/models/resnet3d.py)
+kinetics_r3d18:
+  source: torchvision R3D_18_Weights.KINETICS400_V1
+  url: https://download.pytorch.org/models/r3d_18-b3b3357e.pth
+  file: weights/r3d_18-b3b3357e.pth
+  sha256: b3b3357ead25631ec9c57362ff2128a92d0427e01e2cd184951a44380c3f2e9d
+  retrieved: 2026-11-02
+  use: loaded for configs with train.backbone r3d18 and train.init kinetics; the stem sums to one channel (src/neurovision/models/resnet3d.py)
+kinetics_swin3d_t:
+  source: torchvision Swin3D_T_Weights.KINETICS400_V1
+  url: https://download.pytorch.org/models/swin3d_t-7615ae03.pth
+  file: weights/swin3d_t-7615ae03.pth
+  sha256: 7615ae035996b65eb38dad437ae533d2dfcd36f9f89d28c0f0fa7bfb8e6b3130
+  retrieved: 2026-11-16
+  use: loaded for configs with train.backbone swin3d_t and train.init kinetics; the patch embedding sums to one channel (src/neurovision/models/transformers.py)
+kinetics_swin3d_s:
+  source: torchvision Swin3D_S_Weights.KINETICS400_V1
+  url: https://download.pytorch.org/models/swin3d_s-da41c237.pth
+  file: weights/swin3d_s-da41c237.pth
+  sha256: da41c237cb1bca0fd4b51a4faa6ab0cf786a2ef6cbb6f6609b53bd5d23afc0f9
+  retrieved: 2026-11-16
+  use: loaded for configs with train.backbone swin3d_s and train.init kinetics (src/neurovision/models/transformers.py)
+kinetics_swin3d_b:
+  source: torchvision Swin3D_B_Weights.KINETICS400_V1 (ImageNet-1k, then Kinetics-400)
+  url: https://download.pytorch.org/models/swin3d_b_1k-24f7c7c6.pth
+  file: weights/swin3d_b_1k-24f7c7c6.pth
+  sha256: 24f7c7c6fd97dd52439d72c2208e0785081811389185a4781405b482404e4b9b
+  retrieved: 2026-11-16
+  use: loaded for configs with train.backbone swin3d_b and train.init kinetics (src/neurovision/models/transformers.py)
+ssl_swinunetr:
+  source: MONAI SwinUNETR self-supervised encoder (Tang et al., CVPR 2022; 5,050 CT scans), model_swinvit.pt
+  url: https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/model_swinvit.pt
+  file: weights/model_swinvit-1cf19eca.pt
+  sha256: 1cf19eca3ed0472daf33dedd2f095b118db16edac0fc53d9e878f328ca68c988
+  retrieved: 2026-11-16
+  use: loaded for configs with train.backbone swinunetr and train.init ssl; saved under a name with its hash (src/neurovision/models/transformers.py)

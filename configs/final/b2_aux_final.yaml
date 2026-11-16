@@ -1,0 +1,4 @@
+extends: ../tune/t_flip_b4_r3d18_mm160_aug0.1_lr6e-4_aux.yaml
+# B2 + location-map head (run 2a) on the b2_final schedule: 30 epochs (cosine over all 30), early
+# stop after 5 epochs without a lower val loss. Differs from b2_final only in aux_map_weight: 1.0.
+train: {epochs: 30, early_stop_patience: 5}

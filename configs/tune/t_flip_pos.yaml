@@ -1,0 +1,3 @@
+extends: t_flip.yaml
+# Rare locations are the weak half; weigh each location's positives by sqrt(negatives / positives).
+train: {pos_weight: sqrt}

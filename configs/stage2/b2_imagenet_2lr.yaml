@@ -1,0 +1,3 @@
+extends: b2_imagenet.yaml
+# Pretrained layers at 0.1 x lr (3e-5) for the whole run; the head at lr (3e-4).
+train: {backbone_lr_scale: 0.1}
